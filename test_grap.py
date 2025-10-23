@@ -1,6 +1,7 @@
 
 
 import sys
+import os
 
 from PyQt5.QtCore import Qt, QRect
 from PyQt5.QtGui import QColor, QPalette, QPainter, QPixmap, QPainterPath, QBrush
@@ -33,18 +34,17 @@ class MainWindow(QMainWindow):
 
         left_btn_heights = 100
 
-        mouse_btn = QPushButton("Mouse")
-        # mouse_img = QPixmap('mouse.jpg').scaled(80,100)
-        # mouse_img.save("mouse_scaled.jpg")
-        self.scale_img("mouse.jpg", "mouse_scaled.jpg", 80, 100)
+        mouse_btn = QPushButton()
+        self.scale_img("mouse.jpg", "mouse_scaled.jpg", 40, 50)
+
         mouse_btn.setStyleSheet("""
-        QPushButton {background-image: url('mouse_scaled.jpg'); background-repeat: no-repeat; background-position: centre; background-size: contain;}
-        QPushButton:hover {background-color: #34abeb} 
-        QPushButton:pressed {background-color: #1338bd; color: white} 
+        QPushButton {background-image: url('mouse_scaled.jpg'); background-repeat: no-repeat; background-position: center}
+        QPushButton:hover {background: #34abeb} 
+        QPushButton:pressed {background-color: #1338bd} 
         """)
         mouse_btn.setFixedHeight(left_btn_heights)
 
-        # mouse_btn.clicked.connect(self.mouse_tool)
+        mouse_btn.clicked.connect(self.testfunc)
 
         # line_tool = QPushButton()
         # line_tool.setFixedHeight(left_btn_heights)
@@ -111,6 +111,9 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(center_frame, 15)
         main_layout.addWidget(right_frame, 3)
 
+    def testfunc(self):
+        print("testfunc")
+
     def coloured_frame(self, colour, min_height=None):
         frame = QFrame()
         frame.setFrameShape(QFrame.StyledPanel)
@@ -140,10 +143,18 @@ class MainWindow(QMainWindow):
         return mask
 
     def scale_img(self, old_path, new_path, x, y):
-        print("used")
         img = QPixmap(old_path).scaled(x,y)
-        img.save("mo.jpg")#new_path)
+        img.save(new_path)
+        created_paths.append(new_path)
 
+    def closeEvent(self, event):
+        for created_path in created_paths:
+            os.remove(created_path)
+        event.accept()
+
+
+
+created_paths = []
 
 app = QApplication(sys.argv)
 window = MainWindow()
