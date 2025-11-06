@@ -3,12 +3,13 @@
 import sys
 import os
 
-from PyQt5.QtCore import Qt, QRect
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QColor, QPalette, QPainter, QPixmap, QPainterPath, QBrush
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QSizePolicy,
-    QLabel, QPushButton, QFrame
+    QLabel, QPushButton, QFrame, QDialog, QLineEdit
 )
+from PyQt5.uic.Compiler.qtproxies import QtWidgets
 
 
 class MainWindow(QMainWindow):
@@ -35,9 +36,9 @@ class MainWindow(QMainWindow):
         left_btn_heights = 100
         self.btns["left_btns"] = []
 
-        mouse_btn = self.make_btn("mouse_tool", "left_btns", "img_src/mouse_icon_scaled.png", height=left_btn_heights)
-        line_tool_btn = self.make_btn("line_tool", "left_btns", "img_src/line_icon_scaled.png", height=left_btn_heights)
-        notes_tool_btn = self.make_btn("notes_tool", "left_btns", "img_src/notes_icon_scaled.png", height=left_btn_heights)
+        mouse_btn = self.make_toolbar_btn("mouse_tool", "left_btns", "img_src/mouse_icon_scaled.png", height=left_btn_heights)
+        line_tool_btn = self.make_toolbar_btn("line_tool", "left_btns", "img_src/line_icon_scaled.png", height=left_btn_heights)
+        notes_tool_btn = self.make_toolbar_btn("notes_tool", "left_btns", "img_src/notes_icon_scaled.png", height=left_btn_heights)
 
         left_layout.addWidget(mouse_btn)
         left_layout.addWidget(line_tool_btn)
@@ -70,40 +71,18 @@ class MainWindow(QMainWindow):
         graph_type_icon.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         graph_type_icon.clicked.connect(lambda checked, n="graph_type": self.testfunc(n))
 
-        add_stock_icon = QPushButton()
-        add_stock_icon.setFixedWidth(top_btn_widths)
-        add_stock_icon.setStyleSheet(f"""
-        QPushButton {{background-image: url('img_src/add_stock_icon_scaled.png'); background-repeat: no-repeat; background-position: center; background-color: #e3e3e3}}
-        QPushButton:hover {{background-color: #adadad}}
-        QPushButton:pressed {{background-color: #858585}}        """)
-        add_stock_icon.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
-        add_stock_icon.clicked.connect(lambda checked, n="add_stock": self.testfunc(n))
+        add_stock_btn = self.make_unique_btn("add_stock_btn", "top_btns", 'img_src/add_stock_icon_scaled.png', width=top_btn_widths)
+        remove_stock_btn = self.make_unique_btn("remove_stock_btn", "top_btns", 'img_src/remove_stock_icon_scaled.png', width=top_btn_widths)
+        clear_graph_btn = self.make_unique_btn("clear_graph_btn", "top_btns", 'img_src/clear_graph_icon_scaled.png', width=top_btn_widths)
 
-        remove_stock_icon = QPushButton()
-        remove_stock_icon.setFixedWidth(top_btn_widths)
-        remove_stock_icon.setStyleSheet(f"""
-        QPushButton {{background-image: url('img_src/remove_stock_icon_scaled.png'); background-repeat: no-repeat; background-position: center; background-color: #e3e3e3}}
-        QPushButton:hover {{background-color: #adadad}}
-        QPushButton:pressed {{background-color: #858585}}        """)
-        remove_stock_icon.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
-        remove_stock_icon.clicked.connect(lambda checked, n="remove_stock": self.testfunc(n))
-
-        clear_graph_icon = QPushButton()
-        clear_graph_icon.setFixedWidth(top_btn_widths)
-        clear_graph_icon.setStyleSheet(f"""
-        QPushButton {{background-image: url('img_src/clear_graph_icon_scaled.png'); background-repeat: no-repeat; background-position: center; background-color: #e3e3e3}}
-        QPushButton:hover {{background-color: #adadad}}
-        QPushButton:pressed {{background-color: #858585}}        """)
-        clear_graph_icon.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
-        clear_graph_icon.clicked.connect(lambda checked, n="clear_graph": self.testfunc(n))
-
-        self.btns["top_btns"].append([graph_type_icon, add_stock_icon, remove_stock_icon, clear_graph_icon])
+        save_graph_btn = self.make_unique_btn("save_graph_btn", "top_btns", "img_src/save_graph_icon.png", width=top_btn_widths)
 
         top_layout.addWidget(graph_type_icon)
-        top_layout.addWidget(add_stock_icon)
-        top_layout.addWidget(remove_stock_icon)
-        top_layout.addWidget(clear_graph_icon)
+        top_layout.addWidget(add_stock_btn)
+        top_layout.addWidget(remove_stock_btn)
+        top_layout.addWidget(clear_graph_btn)
         top_layout.addStretch()
+        top_layout.addWidget(save_graph_btn)
 
         # Graph area
         graph_frame = self.coloured_frame("transparent")
@@ -126,9 +105,6 @@ class MainWindow(QMainWindow):
 
         circle_label = QLabel()
         pixmap = QPixmap("img_src/person_icon.jpg")
-        if pixmap.isNull():
-            pixmap = QPixmap(200, 200)
-            pixmap.fill(Qt.gray)
         circle_pixmap = self.circle_bitmap(pixmap, 120)
         circle_label.setPixmap(circle_pixmap)
         circle_label.setAlignment(Qt.AlignCenter)
@@ -154,10 +130,62 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(center_frame, 15)
         main_layout.addWidget(right_frame, 3)
 
-    def testfunc(self, tool):
-        print("testfunc", tool)
+    def testfunc(self, btn):
+        print("testfunc", btn.name)
+        if btn.name == "save_graph_btn":
+            self.show_popup(btn)
 
-    def make_btn(self, name, group, icon_img, width = None, height = None):
+    def save_graph(self, input_box):
+        self.accept()
+        msg = QLabel("Saved.", self)
+        msg.setWindowFlags(Qt.Tooltip)
+        msg.show()
+        QTimer.singleShot(2000, msg.close)
+        print(f"Saved. {input_box.text()}")
+
+    def show_popup(self, btn):
+        popup = QDialog(self)
+        popup.setWindowTitle(btn.name)
+        popup.setModal(True)
+        popup.setFixedSize(200, 100)
+        btn_pos = btn.mapToGlobal(btn.rect().bottomLeft())
+        popup.move(btn_pos.x()-50, btn_pos.y())
+
+        layout = QVBoxLayout()
+
+        label = QLabel("Enter the name to save the graph as.")
+        input_box = QLineEdit()
+        input_box.setPlaceholderText("Name...")
+        input_box.returnPressed.connect(lambda i=input_box: self.save_graph(i))
+
+        layout.addWidget(label)
+        layout.addWidget(input_box)
+        layout.addStretch()
+        popup.setLayout(layout)
+
+        popup.exec_()
+
+    def make_unique_btn(self, name, group, img, width = None, height = None):
+        btn = QPushButton()
+        if height and width:
+            btn.setFixedSize(width, height)
+        elif height and not width:
+            btn.setFixedHeight(height)
+        elif width and not height:
+            btn.setFixedWidth(width)
+        btn.img = img
+        btn.name = name
+        btn.setStyleSheet(f"""
+        QPushButton {{background-image: url('{btn.img}'); background-repeat: no-repeat; background-position: center; background-color: #e3e3e3}}
+        QPushButton:hover {{background-color: #adadad}}
+        QPushButton:pressed {{background-color: #858585}}        """)
+        btn.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+
+        btn.clicked.connect(lambda checked, b=btn: self.testfunc(b))
+        self.btns[group].append(btn)
+        return btn
+
+    def make_toolbar_btn(self, name, group, img, width = None, height = None):
         btn = QPushButton()
         btn.setCheckable(True)
         if height and width:
@@ -166,30 +194,28 @@ class MainWindow(QMainWindow):
             btn.setFixedHeight(height)
         elif width and not height:
             btn.setFixedWidth(width)
-
-        btn.img = icon_img
+        btn.img = img
+        btn.name = name
+        btn.group = group
         btn.setStyleSheet(f"""
         QPushButton {{background-image: url('{btn.img}'); background-repeat: no-repeat; background-position: center; background-color: #e3e3e3}}
         QPushButton:hover {{background-color: #adadad}} 
         """)
 
-        btn.clicked.connect(lambda checked, b=btn, n=name, g=group: self.handle_click(b, n, g))
+        btn.clicked.connect(lambda checked, b=btn: self.handle_toolbar_btn_click(b))
         self.btns[group].append(btn)
         return btn
 
-    def handle_click(self, clicked_btn, name, group):
-        for btn in self.btns[group]:
+    def handle_toolbar_btn_click(self, clicked_btn):
+        for btn in self.btns[clicked_btn.group]:
             if btn == clicked_btn:
                 btn.setStyleSheet(f"""QPushButton {{background-image: url('{btn.img}'); background-repeat: no-repeat; background-position: center; background-color: #8a8a8a}}""")
-                self.testfunc(name)
+                self.testfunc(btn)
             else:
                 btn.setChecked(False)
                 btn.setStyleSheet(f"""QPushButton {{background-image: url('{btn.img}'); background-repeat: no-repeat; background-position: center; background-color: #e3e3e3}}
                                       QPushButton:hover {{background-color: #adadad}} """)
 
-
-
-    @classmethod
     def coloured_frame(self, colour, min_height=None):
         frame = QFrame()
         frame.setFrameShape(QFrame.StyledPanel)
@@ -203,7 +229,6 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(5, 5, 5, 5)
         return frame
 
-    @classmethod
     def circle_bitmap(self, pixmap, diameter):
         pixmap = pixmap.scaled(diameter, diameter, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
 
