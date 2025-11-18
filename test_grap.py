@@ -18,72 +18,54 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Dashboard Layout Example")
         self.setGeometry(100, 100, 1500, 900)
-        self.btns = {}
+        self.btns = {"left_btns": [], "top_btns": [], "prediction_type_btns": [], "time_period_btns": [], "confirmation_btns": []}
+        self.colours = {"Default": "#e3e3e3", "Hover": "#adadad", "Clicked": "#858585"}
 
-        ##### --- Main alignment --- #####
-        central = QWidget()
-        self.setCentralWidget(central)
+        central = QWidget(); self.setCentralWidget(central)
 
-        main_layout = QHBoxLayout()
-        central.setLayout(main_layout)
+        main_layout = QHBoxLayout(); central.setLayout(main_layout)
+        left_frame = self.build_left_frame(); center_frame = self.build_centre_frame(); right_frame = self.build_right_frame()
+        main_layout.addWidget(left_frame, 1); main_layout.addWidget(center_frame, 15); main_layout.addWidget(right_frame, 3)
 
+    def build_left_frame(self) -> QFrame:
         ##### --- Left area --- #####
-        left_frame = QFrame()
-        left_frame.setStyleSheet("border: 1px solid black;")
-        left_layout = QVBoxLayout(left_frame)
-        left_layout.setContentsMargins(0,0,0,0)
-        left_layout.setSpacing(0)
+        left_frame = QFrame(); left_frame.setStyleSheet("border: 1px solid black;")
+        left_layout = QVBoxLayout(left_frame); left_layout.setContentsMargins(0,0,0,0); left_layout.setSpacing(0)
 
-        left_btn_heights = 100
-        self.btns["left_btns"] = []
+        mouse_btn = self.make_img_grp_btn("mouse_tool", "left_btns", "img_src/mouse_icon_scaled.png", height=100)
+        line_tool_btn = self.make_img_grp_btn("line_tool", "left_btns", "img_src/line_icon_scaled.png", height=100)
+        notes_tool_btn = self.make_img_grp_btn("notes_tool", "left_btns", "img_src/notes_icon_scaled.png", height=100)
 
-        mouse_btn = self.make_img_grp_btn("mouse_tool", "left_btns", "img_src/mouse_icon_scaled.png", height=left_btn_heights)
-        line_tool_btn = self.make_img_grp_btn("line_tool", "left_btns", "img_src/line_icon_scaled.png", height=left_btn_heights)
-        notes_tool_btn = self.make_img_grp_btn("notes_tool", "left_btns", "img_src/notes_icon_scaled.png", height=left_btn_heights)
-
-        left_layout.addWidget(mouse_btn)
-        left_layout.addWidget(line_tool_btn)
-        left_layout.addWidget(notes_tool_btn)
+        left_layout.addWidget(mouse_btn); left_layout.addWidget(line_tool_btn); left_layout.addWidget(notes_tool_btn)
         left_layout.addStretch()
 
+        return left_frame
+
+    def build_centre_frame(self) -> QFrame:
         ##### --- Center area --- #####
-        center_frame = QFrame()
-        center_layout = QVBoxLayout(center_frame)
+        center_frame = QFrame(); center_layout = QVBoxLayout(center_frame)
 
         ## Top bar
-        top_frame = QFrame()
-        top_frame.setStyleSheet("border: 1px solid black")
-        top_layout = QHBoxLayout(top_frame)
-        top_layout.setAlignment(Qt.AlignHCenter)
-        top_layout.setContentsMargins(0,0,0,0)
-        top_layout.setSpacing(0)
+        top_frame = QFrame(); top_frame.setStyleSheet("border: 1px solid black")
+        top_layout = QHBoxLayout(top_frame); top_layout.setAlignment(Qt.AlignHCenter); top_layout.setContentsMargins(0,0,0,0); top_layout.setSpacing(0)
 
-        top_btn_widths = 100
-        self.btns["top_btns"] = []
-
-        graph_type_btn = QPushButton()
-        graph_type_btn.setCheckable(True)
-        graph_type_btn.setFixedWidth(top_btn_widths)
+        graph_type_btn = QPushButton(); graph_type_btn.setCheckable(True); graph_type_btn.setFixedWidth(100)
+        graph_type_btn.name = "graph_type_btn"; graph_type_btn.group = "top_btns"
         graph_type_btn.setStyleSheet(f"""
-        QPushButton {{background-image: url('img_src/candlestick_icon_scaled.png'); background-repeat: no-repeat; background-position: center; background-color: #e3e3e3}}
-        QPushButton:hover {{background-color: #adadad}}
-        QPushButton:checked {{background-image: url('img_src/line_graph_icon_scaled.png'); background-repeat: no-repeat; background-position: center; background-color: #e3e3e3}}
-        QPushButton:checked:hover {{background-color: #adadad}}        """)
+        QPushButton {{background-image: url('img_src/candlestick_icon_scaled.png'); background-repeat: no-repeat; background-position: center; background-color: {self.colours['Default']}}}
+        QPushButton:hover {{background-color: {self.colours['Hover']}}}
+        QPushButton:checked {{background-image: url('img_src/line_graph_icon_scaled.png'); background-repeat: no-repeat; background-position: center; background-color: {self.colours['Default']}}}
+        QPushButton:checked:hover {{background-color: {self.colours['Hover']}}}        """)
         graph_type_btn.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
-        graph_type_btn.name = "graph_type_btn"
-        graph_type_btn.clicked.connect(lambda checked, b=graph_type_btn: self.testfunc(b))
+        graph_type_btn.clicked.connect(lambda checked: self.testfunc(graph_type_btn))
 
-        add_stock_btn = self.make_indv_btn("add_stock_btn", "top_btns", 'img_src/add_stock_icon_scaled.png', width=top_btn_widths)
-        remove_stock_btn = self.make_indv_btn("remove_stock_btn", "top_btns", 'img_src/remove_stock_icon_scaled.png', width=top_btn_widths)
-        clear_graph_btn = self.make_indv_btn("clear_graph_btn", "top_btns", 'img_src/clear_graph_icon_scaled.png', width=top_btn_widths)
-        save_graph_btn = self.make_indv_btn("save_graph_btn", "top_btns", "img_src/save_graph_icon.png", width=top_btn_widths)
+        add_stock_btn = self.make_indv_btn("add_stock_btn", "top_btns", 'img_src/add_stock_icon_scaled.png', width=100)
+        remove_stock_btn = self.make_indv_btn("remove_stock_btn", "top_btns", 'img_src/remove_stock_icon_scaled.png', width=100)
+        clear_graph_btn = self.make_indv_btn("clear_graph_btn", "top_btns", 'img_src/clear_graph_icon_scaled.png', width=100)
+        save_graph_btn = self.make_indv_btn("save_graph_btn", "top_btns", "img_src/save_graph_icon.png", width=100)
 
-        top_layout.addWidget(graph_type_btn)
-        top_layout.addWidget(add_stock_btn)
-        top_layout.addWidget(remove_stock_btn)
-        top_layout.addWidget(clear_graph_btn)
-        top_layout.addStretch()
-        top_layout.addWidget(save_graph_btn)
+        top_layout.addWidget(graph_type_btn); top_layout.addWidget(add_stock_btn); top_layout.addWidget(remove_stock_btn); top_layout.addWidget(clear_graph_btn)
+        top_layout.addStretch(); top_layout.addWidget(save_graph_btn)
 
         ## Graph area
         graph_frame = self.coloured_frame("transparent")
@@ -93,6 +75,10 @@ class MainWindow(QMainWindow):
 
         center_layout.addWidget(top_frame, 1)
         center_layout.addWidget(graph_frame, 10)
+
+        return center_frame
+
+    def build_right_frame(self) -> QFrame:
 
         ##### --- Right sidebar --- #####
         right_frame = QFrame()
@@ -123,7 +109,6 @@ class MainWindow(QMainWindow):
 
         # Type of prediction
         prediction_type_layout = QHBoxLayout(); prediction_type_layout.setSpacing(10)
-        self.btns["prediction_type_btns"] = []
 
         lin_reg_btn = self.make_text_grp_btn("linear_regression_btn", "prediction_type_btns", "Linear Reg", width=75, height=30)  # lin_reg = linear regression
         random_forrest_btn = self.make_text_grp_btn("random_forrest_btn", "prediction_type_btns", "Random Forrest", width=75, height=30)
@@ -151,7 +136,6 @@ class MainWindow(QMainWindow):
 
         # Time period
         time_period_layout = QHBoxLayout(); time_period_layout.setSpacing(10)
-        self.btns["time_period_btns"] = []
 
         day_btn = self.make_text_grp_btn("day_btn", "time_period_btns", "Day", width=75, height=30)
         month_btn = self.make_text_grp_btn("month_btn", "time_period_btns", "Month", width=75, height=30)
@@ -162,7 +146,6 @@ class MainWindow(QMainWindow):
 
         # Confirmations
         confirmations_layout = QHBoxLayout(); confirmations_layout.setSpacing(50); confirmations_layout.setContentsMargins(20,20,20,20)
-        self.btns["confirmation_btns"] = []
         a=70
         reroll_btn = self.make_indv_btn("reroll_btn", "confirmation_btns", "img_src/reroll_icon_scaled.png", width=a, height=a)
         confirm_pred_btn = self.make_indv_btn("confirm_pred_btn", "confirmation_btns", "img_src/confirm_icon_scaled.png", width=a, height=a)
@@ -188,12 +171,9 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(prediction_settings_frame, 10)
         right_layout.addWidget(prediction_result_frame, 10)
 
-        ##### --- Add to layout --- #####
-        main_layout.addWidget(left_frame, 1)
-        main_layout.addWidget(center_frame, 15)
-        main_layout.addWidget(right_frame, 3)
+        return right_frame
 
-    def testfunc(self, btn):
+    def testfunc(self, btn: QPushButton):
         print("testfunc", btn.name)
         if btn.name == "save_graph_btn":
             self.show_popup(btn)
@@ -255,6 +235,7 @@ class MainWindow(QMainWindow):
             
         btn.img = img
         btn.name = name
+        btn.group = group
         btn.setStyleSheet(f"""
         QPushButton {{background-image: url('{btn.img}'); background-repeat: no-repeat; background-position: center; background-color: #e3e3e3}}
         QPushButton:hover {{background-color: #adadad}}
@@ -292,7 +273,6 @@ class MainWindow(QMainWindow):
         self.btns[group].append(btn)
         return btn
 
-
     def make_img_grp_btn(self, name, group, img, width = None, height = None):
         btn = QPushButton(); btn.setCheckable(True)
         btn.name = name; btn.group = group; btn.img = img
@@ -319,8 +299,7 @@ class MainWindow(QMainWindow):
         self.btns[group].append(btn)
         return btn
 
-
-    def coloured_frame(self, colour, min_height=None):
+    def coloured_frame(self, colour, min_height=None):    # TEMP FUNCTION
         frame = QFrame()
         frame.setFrameShape(QFrame.StyledPanel)
         frame.setAutoFillBackground(True)
