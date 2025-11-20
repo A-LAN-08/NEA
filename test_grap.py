@@ -1,16 +1,16 @@
 
 
 import sys
-import os
-from statistics import linear_regression
+# import os
+# from statistics import linear_regression
 
 from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QColor, QPalette, QPainter, QPixmap, QPainterPath, QBrush
+from PyQt5.QtGui import QColor, QPalette, QPainter, QPixmap, QPainterPath#, QBrush
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QSizePolicy,
     QLabel, QPushButton, QFrame, QDialog, QLineEdit, QSlider
 )
-from PyQt5.uic.Compiler.qtproxies import QtWidgets
+# from PyQt5.uic.Compiler.qtproxies import QtWidgets
 
 
 class MainWindow(QMainWindow):
@@ -81,58 +81,48 @@ class MainWindow(QMainWindow):
     def build_right_frame(self) -> QFrame:
 
         ##### --- Right sidebar --- #####
-        right_frame = QFrame()
-        right_layout = QVBoxLayout(right_frame)
+        right_frame = QFrame(); right_layout = QVBoxLayout(right_frame)
 
         ## Profile screen
-        profile_frame = QWidget()
-        profile_frame.setStyleSheet("background-color: None;")
-        profile_frame_layout = QVBoxLayout(profile_frame)
-        profile_frame_layout.setAlignment(Qt.AlignCenter)
+        profile_frame = QWidget(); profile_frame.setStyleSheet("background-color: None;")
+        profile_frame_layout = QVBoxLayout(profile_frame); profile_frame_layout.setAlignment(Qt.AlignCenter)
 
         circle_label = QLabel()
-        pixmap = QPixmap("img_src/person_icon.jpg")
-        circle_pixmap = self.circle_bitmap(pixmap, 120)
-        circle_label.setPixmap(circle_pixmap)
+        circle_label.setPixmap(self.circle_bitmap(QPixmap("img_src/person_icon.jpg"), 120))
         circle_label.setAlignment(Qt.AlignCenter)
 
         profile_frame_layout.addWidget(circle_label, alignment=Qt.AlignCenter)
 
-        ## Prediction settings frame
-        prediction_settings_frame = QFrame(); prediction_settings_frame.setStyleSheet("border: 1px solid black")
-        prediction_settings_layout = QVBoxLayout(prediction_settings_frame); prediction_settings_layout.setContentsMargins(3,3,3,3); prediction_settings_layout.setSpacing(20)
+        ## Prediction settings frame   (pd_set = prediction settings
+        pd_set_frame = QFrame(); pd_set_frame.setStyleSheet("border: 1px solid black")
+        pd_set_layout = QVBoxLayout(pd_set_frame); pd_set_layout.setContentsMargins(3,3,3,3); pd_set_layout.setSpacing(20)
 
         # Ticker input
         ticker_symbol_inbox = QLineEdit(); ticker_symbol_inbox.setPlaceholderText("Ticker symbol...")
         ticker_symbol_inbox.setStyleSheet("font-size: 16px; font-family: Aller Display"); ticker_symbol_inbox.setFixedHeight(30)
-
 
         # Type of prediction
         prediction_type_layout = QHBoxLayout(); prediction_type_layout.setSpacing(10)
 
         lin_reg_btn = self.make_text_grp_btn("linear_regression_btn", "prediction_type_btns", "Linear Reg", width=75, height=30)  # lin_reg = linear regression
         random_forrest_btn = self.make_text_grp_btn("random_forrest_btn", "prediction_type_btns", "Random Forrest", width=75, height=30)
-        ri_btn = self.make_text_grp_btn("ri_btn", "prediction_type_btns", "Reinforcement Learning", width=75, height=30)  # RI = reinforcement learning
+        ri_btn = self.make_text_grp_btn("ri_btn", "prediction_type_btns", "Reinforcement Learning", width=75, height=30)  # ri = reinforcement learning
 
         prediction_type_layout.addWidget(lin_reg_btn); prediction_type_layout.addWidget(random_forrest_btn); prediction_type_layout.addWidget(ri_btn)
-
 
         # Risk slider
         risk_layout = QVBoxLayout(); risk_layout.setContentsMargins(0,0,0,0); risk_layout.setSpacing(0)
 
-        risk_slider = QSlider(Qt.Horizontal)
-        risk_slider.setStyleSheet("""QSlider {border: none}"""); risk_slider.setTickPosition(QSlider.TicksBelow)
-        risk_slider.setMinimum(1); risk_slider.setMaximum(10); risk_slider.setTickInterval(1); risk_slider.setSingleStep(1)
+        risk_slider = QSlider(Qt.Horizontal); risk_slider.setStyleSheet("""QSlider {border: none}""")
+        risk_slider.setTickPosition(QSlider.TicksBelow); risk_slider.setMinimum(1); risk_slider.setMaximum(10); risk_slider.setTickInterval(1); risk_slider.setSingleStep(1)
         def update_value(value): risk_value_label.setText(f"Risk tolerance: {value}{' (Recommended)'if value == 4 else ''}")
         risk_slider.valueChanged.connect(update_value)
 
         risk_value_label = QLabel("Risk tolerance: 1"); risk_value_label.setAlignment(Qt.AlignCenter); risk_value_label.setStyleSheet("border: none; font-size: 13px; font-family: Aller Display")
-
         number_layout = QHBoxLayout()
         for i in range(1, 11): nlabel = QLabel(str(i)); nlabel.setAlignment(Qt.AlignCenter); nlabel.setStyleSheet("border: none"); number_layout.addWidget(nlabel)
 
         risk_layout.addWidget(risk_value_label); risk_layout.addWidget(risk_slider); risk_layout.addLayout(number_layout)
-
 
         # Time period
         time_period_layout = QHBoxLayout(); time_period_layout.setSpacing(10)
@@ -143,34 +133,22 @@ class MainWindow(QMainWindow):
 
         time_period_layout.addWidget(day_btn); time_period_layout.addWidget(month_btn); time_period_layout.addWidget(year_btn)
 
-
         # Confirmations
         confirmations_layout = QHBoxLayout(); confirmations_layout.setSpacing(50); confirmations_layout.setContentsMargins(20,20,20,20)
-        a=70
-        reroll_btn = self.make_indv_btn("reroll_btn", "confirmation_btns", "img_src/reroll_icon_scaled.png", width=a, height=a)
-        confirm_pred_btn = self.make_indv_btn("confirm_pred_btn", "confirmation_btns", "img_src/confirm_icon_scaled.png", width=a, height=a)
+        reroll_btn = self.make_indv_btn("reroll_btn", "confirmation_btns", "img_src/reroll_icon_scaled.png", width=70, height=70)
+        confirm_pd_btn = self.make_indv_btn("confirm_pd_btn", "confirmation_btns", "img_src/confirm_icon_scaled.png", width=70, height=70)
 
-        confirmations_layout.addWidget(reroll_btn); confirmations_layout.addWidget(confirm_pred_btn)
+        confirmations_layout.addWidget(reroll_btn); confirmations_layout.addWidget(confirm_pd_btn)
 
-
-        prediction_settings_layout.addWidget(ticker_symbol_inbox)
-        prediction_settings_layout.addLayout(prediction_type_layout)
-        prediction_settings_layout.addLayout(risk_layout)
-        prediction_settings_layout.addLayout(time_period_layout)
-        prediction_settings_layout.addLayout(confirmations_layout)
-        prediction_settings_layout.addStretch()
+        pd_set_layout.addWidget(ticker_symbol_inbox); pd_set_layout.addLayout(prediction_type_layout); pd_set_layout.addLayout(risk_layout)
+        pd_set_layout.addLayout(time_period_layout); pd_set_layout.addLayout(confirmations_layout); pd_set_layout.addStretch()
 
         ## Prediction result
         prediction_result_frame = self.coloured_frame("transparent")
-        prediction_result_label = QLabel("Prediction result")
-        prediction_result_label.setAlignment(Qt.AlignCenter)
+        prediction_result_label = QLabel("Prediction result"); prediction_result_label.setAlignment(Qt.AlignCenter)
         prediction_result_frame.layout().addWidget(prediction_result_label)
 
-
-        right_layout.addWidget(profile_frame, 1)
-        right_layout.addWidget(prediction_settings_frame, 10)
-        right_layout.addWidget(prediction_result_frame, 10)
-
+        right_layout.addWidget(profile_frame, 1); right_layout.addWidget(pd_set_frame, 10); right_layout.addWidget(prediction_result_frame, 10)
         return right_frame
 
     def testfunc(self, btn: QPushButton):
@@ -180,62 +158,37 @@ class MainWindow(QMainWindow):
 
     def save_graph(self, input_box):
         print(f"Saved. {input_box.text()}")
-
-        msg = QWidget(self)
-        msg.setWindowFlags(Qt.FramelessWindowHint | Qt.BypassWindowManagerHint)
-        msg.setAttribute(Qt.WA_DeleteOnClose)
+        msg = QWidget(self); msg.setWindowFlags(Qt.FramelessWindowHint | Qt.BypassWindowManagerHint); msg.setAttribute(Qt.WA_DeleteOnClose)
 
         layout = QVBoxLayout(msg)
-        label = QLabel("Saved.")
-        label.setStyleSheet("background-color: black; color: white; padding: 5px; border-radius: 5px;")
-        layout.addWidget(label)
-        msg.adjustSize()
+        label = QLabel("Saved."); label.setStyleSheet("background-color: black; color: white; padding: 5px; border-radius: 5px;"); layout.addWidget(label)
 
-        pos = self.rect().center() - msg.rect().center()
-        msg.move(pos)
-        msg.show()
-
+        msg.adjustSize(); pos = self.rect().center() - msg.rect().center(); msg.move(pos); msg.show()
         QTimer.singleShot(2000, msg.close)
 
     def show_popup(self, btn):
-        popup = QDialog(self)
-        popup.setWindowTitle(btn.name)
-        popup.setModal(True)
-        popup.setFixedSize(200, 100)
+        popup = QDialog(self); popup.setWindowTitle(btn.name); popup.setModal(True); popup.setFixedSize(200, 100)
         btn_pos = btn.mapToGlobal(btn.rect().bottomLeft())
         popup.move(btn_pos.x()-50, btn_pos.y())
 
         layout = QVBoxLayout()
-
         label = QLabel("Enter the name to save the graph as.")
-        input_box = QLineEdit()
-        input_box.setPlaceholderText("Name...")
+        input_box = QLineEdit(); input_box.setPlaceholderText("Name...")
 
-        def save_and_close():
-            self.save_graph(input_box)
-            popup.accept()
-
+        def save_and_close(): self.save_graph(input_box); popup.accept()
         input_box.returnPressed.connect(save_and_close)
 
-        layout.addWidget(label)
-        layout.addWidget(input_box)
-        layout.addStretch()
-        popup.setLayout(layout)
-
-        popup.exec_()
+        layout.addWidget(label); layout.addWidget(input_box); layout.addStretch()
+        popup.setLayout(layout); popup.exec_()
 
     def make_indv_btn(self, name, group, img, width = None, height = None):
         btn = QPushButton()
-        if height and width:
-            btn.setFixedSize(width, height)
-        elif height and not width:
-            btn.setFixedHeight(height)
-        elif width and not height:
-            btn.setFixedWidth(width)
+        btn.img = img; btn.name = name; btn.group = group
+
+        if height and width: btn.setFixedSize(width, height)
+        elif height and not width: btn.setFixedHeight(height)
+        elif width and not height: btn.setFixedWidth(width)
             
-        btn.img = img
-        btn.name = name
-        btn.group = group
         btn.setStyleSheet(f"""
         QPushButton {{background-image: url('{btn.img}'); background-repeat: no-repeat; background-position: center; background-color: #e3e3e3}}
         QPushButton:hover {{background-color: #adadad}}
@@ -257,7 +210,7 @@ class MainWindow(QMainWindow):
         btn.setStyleSheet("""
         QPushButton {background-color: #e3e3e3; font-size: 13px; font-family: Aller display}
         QPushButton:hover {background-color: #adadad}""")
-        btn.setText(text)
+        btn.setText(btn.text)
 
         def handle_text_grp_btn_click(clicked_btn):
             for grp_btn in self.btns[clicked_btn.group]:
@@ -300,35 +253,25 @@ class MainWindow(QMainWindow):
         return btn
 
     def coloured_frame(self, colour, min_height=None):    # TEMP FUNCTION
-        frame = QFrame()
-        frame.setFrameShape(QFrame.StyledPanel)
-        frame.setAutoFillBackground(True)
-        palette = frame.palette()
-        palette.setColor(QPalette.Window, QColor(colour))
+        frame = QFrame(); frame.setFrameShape(QFrame.StyledPanel); frame.setAutoFillBackground(True)
+        palette = frame.palette(); palette.setColor(QPalette.Window, QColor(colour))
         frame.setPalette(palette)
-        if min_height:
-            frame.setMinimumHeight(min_height)
-        layout = QVBoxLayout(frame)
-        layout.setContentsMargins(5, 5, 5, 5)
+        if min_height: frame.setMinimumHeight(min_height)
+        layout = QVBoxLayout(frame); layout.setContentsMargins(5, 5, 5, 5)
         return frame
 
     def circle_bitmap(self, pixmap, diameter):
         pixmap = pixmap.scaled(diameter, diameter, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-
-        mask = QPixmap(diameter, diameter)
-        mask.fill(Qt.transparent)
+        mask = QPixmap(diameter, diameter); mask.fill(Qt.transparent)
 
         painter = QPainter(mask)
-        path = QPainterPath()
-        path.addEllipse(0, 0, diameter, diameter)
+        path = QPainterPath(); path.addEllipse(0, 0, diameter, diameter)
         painter.setClipPath(path)
 
-        painter.drawPixmap(0, 0, pixmap)
-        painter.end()
+        painter.drawPixmap(0, 0, pixmap); painter.end()
         return mask
 
-    def closeEvent(self, event) -> None:
-        event.accept()
+    def closeEvent(self, event) -> None: event.accept()
 
 
 app = QApplication(sys.argv)
