@@ -3,10 +3,9 @@
 import sys
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QColor, QPalette, QPainter, QPixmap, QPainterPath
-from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QSizePolicy,
-    QLabel, QPushButton, QFrame, QDialog, QLineEdit, QSlider
-)
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QHBoxLayout, QVBoxLayout, QSizePolicy,
+                             QWidget, QLabel, QFrame, QPushButton, QDialog, QLineEdit, QSlider, QMessageBox)
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -78,7 +77,7 @@ class MainWindow(QMainWindow):
         # Initialize the right sidebar with profile, prediction settings, and results
         right_frame = QFrame(); right_layout = QVBoxLayout(right_frame)
 
-        # Defien profile frame
+        # Define profile frame
         profile_frame = QWidget(); profile_frame.setStyleSheet("background-color: None;")
         profile_frame_layout = QVBoxLayout(profile_frame); profile_frame_layout.setAlignment(Qt.AlignCenter)
 
@@ -89,13 +88,13 @@ class MainWindow(QMainWindow):
 
         profile_frame_layout.addWidget(circle_label, alignment=Qt.AlignCenter)
 
-        # Define prediction settings frame (pd_set = prediction_settings) and widgets within
-        pd_set_frame = QFrame(); pd_set_frame.setStyleSheet("border: 1px solid black")
-        pd_set_layout = QVBoxLayout(pd_set_frame); pd_set_layout.setContentsMargins(3,3,3,3); pd_set_layout.setSpacing(20)
+        ## Define prediction settings frame (pd_set = prediction_settings) and widgets within
+        self.pd_set_frame = QFrame(); self.pd_set_frame.setStyleSheet("border: 1px solid black")
+        pd_set_layout = QVBoxLayout(self.pd_set_frame); pd_set_layout.setContentsMargins(3,3,3,3); pd_set_layout.setSpacing(20)
 
         # Ticker input widget
-        ticker_symbol_inbox = QLineEdit(); ticker_symbol_inbox.setPlaceholderText("Ticker symbol...")
-        ticker_symbol_inbox.setStyleSheet("font-size: 16px; font-family: Aller Display"); ticker_symbol_inbox.setFixedHeight(30)
+        self.ticker_symbol_inbox = QLineEdit(); self.ticker_symbol_inbox.setPlaceholderText("Ticker symbol...")
+        self.ticker_symbol_inbox.setStyleSheet("font-size: 16px; font-family: Aller Display"); self.ticker_symbol_inbox.setFixedHeight(30)
 
         # Type of prediction selection widgets
         prediction_type_layout = QHBoxLayout(); prediction_type_layout.setSpacing(10)
@@ -109,16 +108,16 @@ class MainWindow(QMainWindow):
         # Risk slider widget
         risk_layout = QVBoxLayout(); risk_layout.setContentsMargins(0,0,0,0); risk_layout.setSpacing(0)
 
-        risk_slider = QSlider(Qt.Horizontal); risk_slider.setStyleSheet("""QSlider {border: none}""")
-        risk_slider.setTickPosition(QSlider.TicksBelow); risk_slider.setMinimum(1); risk_slider.setMaximum(10); risk_slider.setTickInterval(1); risk_slider.setSingleStep(1)
-        def update_value(value): risk_value_label.setText(f"Risk tolerance: {value}{' (Recommended)'if value == 4 else ''}")
-        risk_slider.valueChanged.connect(update_value)
+        self.risk_slider = QSlider(Qt.Horizontal); self.risk_slider.setStyleSheet("""QSlider {border: none}"""); self.risk_slider.setTickPosition(QSlider.TicksBelow)
+        self.risk_slider.setMinimum(1); self.risk_slider.setMaximum(10); self.risk_slider.setTickInterval(1); self.risk_slider.setSingleStep(1)
+        self.risk_slider.valueChanged.connect(lambda v: risk_value_label.setText(f"Risk tolerance: {v}{' (Recommended)'if v == 4 else ''}"))
 
+        # Risk slider labels
         risk_value_label = QLabel("Risk tolerance: 1"); risk_value_label.setAlignment(Qt.AlignCenter); risk_value_label.setStyleSheet("border: none; font-size: 13px; font-family: Aller Display")
         number_layout = QHBoxLayout()
         for i in range(1, 11): nlabel = QLabel(str(i)); nlabel.setAlignment(Qt.AlignCenter); nlabel.setStyleSheet("border: none"); number_layout.addWidget(nlabel)
 
-        risk_layout.addWidget(risk_value_label); risk_layout.addWidget(risk_slider); risk_layout.addLayout(number_layout)
+        risk_layout.addWidget(risk_value_label); risk_layout.addWidget(self.risk_slider); risk_layout.addLayout(number_layout)
 
         # Time period selection widgets
         time_period_layout = QHBoxLayout(); time_period_layout.setSpacing(10)
@@ -136,16 +135,18 @@ class MainWindow(QMainWindow):
 
         confirmations_layout.addWidget(reroll_btn); confirmations_layout.addWidget(confirm_pd_btn)
 
-        pd_set_layout.addWidget(ticker_symbol_inbox); pd_set_layout.addLayout(prediction_type_layout); pd_set_layout.addLayout(risk_layout)
+        # Add all prediction setting widgets to prediction settings layout
+        pd_set_layout.addWidget(self.ticker_symbol_inbox); pd_set_layout.addLayout(prediction_type_layout); pd_set_layout.addLayout(risk_layout)
         pd_set_layout.addLayout(time_period_layout); pd_set_layout.addLayout(confirmations_layout); pd_set_layout.addStretch()
 
         # Define prediction result widget (TBD: to be developed further)
-        prediction_result_frame = self.coloured_frame("transparent")
-        prediction_result_label = QLabel("Prediction result"); prediction_result_label.setAlignment(Qt.AlignCenter)
-        prediction_result_frame.layout().addWidget(prediction_result_label)
+        prediction_result_frame = QFrame()
+        prediction_result_layout = QVBoxLayout(prediction_result_frame)
+        self.prediction_result_label = QLabel("Prediction result"); self.prediction_result_label.setAlignment(Qt.AlignCenter); self.prediction_result_label.setWordWrap(True) 
+        prediction_result_layout.addWidget(self.prediction_result_label)
 
         # Add profile, prediction settings, and result frames to right frame
-        right_layout.addWidget(profile_frame, 1); right_layout.addWidget(pd_set_frame, 10); right_layout.addWidget(prediction_result_frame, 10)
+        right_layout.addWidget(profile_frame, 1); right_layout.addWidget(self.pd_set_frame, 10); right_layout.addWidget(prediction_result_frame, 10)
         return right_frame
 
     def testfunc(self, btn: QPushButton) -> None:
@@ -153,6 +154,37 @@ class MainWindow(QMainWindow):
         print("testfunc", btn.name)
         if btn.name == "save_graph_btn":
             self.show_popup(btn)
+        elif btn.name == "confirm_pd_btn":
+            self.start_prediction_simulation()
+
+    def start_prediction_simulation(self) -> None:
+        print("Prediction starting...") # DEBUG
+
+        # Find ticker and risk level inputs
+        ticker = self.ticker_symbol_inbox.text(); risk_level = self.risk_slider.value()
+        # Find selected Prediction Type button        
+        selected_prediction_type = next((btn.text for btn in self.btns["prediction_type_btns"] if btn.isChecked()), None)
+        # Find selected Time Period button
+        selected_time_period = next((btn.text for btn in self.btns["time_period_btns"] if btn.isChecked()), None)
+        
+        # Print gathered inputs (DEBUG)
+        print(f"""
+--- INPUTS RECEIVED ---
+Ticker: {ticker}
+Prediction Type: {selected_prediction_type}
+Risk Level: {risk_level}
+Time Period: {selected_time_period}
+-----------------------""")
+
+        self.pd_set_frame.setEnabled(False)
+        self.prediction_result_label.setText("Processing... (10s)")
+        QTimer.singleShot(10000, self.finish_prediction_simulation)
+    
+    def finish_prediction_simulation(self) -> None:
+        print("Prediction finished.") # DEBUG
+        self.pd_set_frame.setEnabled(True)
+        self.prediction_result_label.setText("Prediction complete: Stock price expected to rise by 5% over the next month.") # Temp text to show completion
+        QMessageBox.information(self, "Prediction Status", "Successful")
 
     def save_graph(self, input_box) -> None:
         # Function to save the state of the graph when button pressed (TBD: to be developed further)
