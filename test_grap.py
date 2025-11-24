@@ -11,7 +11,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         # Initialize the main window and dictionaries for buttons and colours
         super().__init__()
-        self.setWindowTitle("Dashboard Layout Example")
+        self.setWindowTitle("Stock Prediction App")
         self.setGeometry(100, 100, 1500, 900)
         self.btns = {"left_btns": [], "top_btns": [], "prediction_type_btns": [], "time_period_btns": [], "confirmation_btns": []}
         self.colours = {"Default": "#e3e3e3", "Hover": "#adadad", "Clicked": "#858585"}
@@ -19,7 +19,7 @@ class MainWindow(QMainWindow):
         # Set up the main layout with left, center, and right frames
         central = QWidget(); self.setCentralWidget(central)
         main_layout = QHBoxLayout(); central.setLayout(main_layout)
-        left_frame = self.build_left_frame(); center_frame = self.build_centre_frame(); right_frame = self.build_right_frame()
+        left_frame = self.build_left_frame(); center_frame = self.build_center_frame(); right_frame = self.build_right_frame()
         main_layout.addWidget(left_frame, 1); main_layout.addWidget(center_frame, 15); main_layout.addWidget(right_frame, 3)
 
     def build_left_frame(self) -> QFrame:
@@ -35,7 +35,7 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(mouse_btn); left_layout.addWidget(line_tool_btn); left_layout.addWidget(notes_tool_btn); left_layout.addStretch()
         return left_frame
 
-    def build_centre_frame(self) -> QFrame:
+    def build_center_frame(self) -> QFrame:
         # Initialize the center frame with top bar and graph area
         center_frame = QFrame(); center_layout = QVBoxLayout(center_frame)
 
@@ -140,9 +140,10 @@ class MainWindow(QMainWindow):
         pd_set_layout.addLayout(time_period_layout); pd_set_layout.addLayout(confirmations_layout); pd_set_layout.addStretch()
 
         # Define prediction result widget (TBD: to be developed further)
-        prediction_result_frame = QFrame()
+        prediction_result_frame = QFrame(); prediction_result_frame.setStyleSheet("border: 1px solid black")
         prediction_result_layout = QVBoxLayout(prediction_result_frame)
         self.prediction_result_label = QLabel("Prediction result"); self.prediction_result_label.setAlignment(Qt.AlignCenter); self.prediction_result_label.setWordWrap(True) 
+        self.prediction_result_label.setStyleSheet("border: none")
         prediction_result_layout.addWidget(self.prediction_result_label)
 
         # Add profile, prediction settings, and result frames to right frame
@@ -167,7 +168,12 @@ class MainWindow(QMainWindow):
         # Find selected Time Period button
         selected_time_period = next((btn.text for btn in self.btns["time_period_btns"] if btn.isChecked()), None)
         
-        # Print gathered inputs (DEBUG)
+        # Validation to make sure all input fields are filled
+        if not all([ticker, selected_prediction_type, selected_time_period]):
+            QMessageBox.warning(self, "Input Error", "Please fill in all prediction settings before confirming.")
+            return
+
+        # Print gathered inputs (TEMP DEBUG)
         print(f"""
 --- INPUTS RECEIVED ---
 Ticker: {ticker}
@@ -181,14 +187,18 @@ Time Period: {selected_time_period}
 
         def finish_prediction_simulation():
             print("Prediction finished.")  # DEBUG
+            # Re-enable prediction settings and show results (TBD: to be developed further)
             self.pd_set_frame.setEnabled(True)
             self.prediction_result_label.setText(f"""
-        --- INPUTS RECEIVED ---
-        Ticker: {ticker}
-        Prediction Type: {selected_prediction_type}
-        Risk Level: {risk_level}
-        Time Period: {selected_time_period}
-        -----------------------""")  # Temp text to show completion
+Completed Prediction. . .
+                                               
+--- INPUTS RECEIVED ---
+Ticker: {ticker}
+Prediction Type: {selected_prediction_type}
+Risk Level: {risk_level}
+Time Period: {selected_time_period}
+-----------------------""")  # Temp text to show completion
+            # Popup message box to show success
             QMessageBox.information(self, "Prediction Status", "Successful")
 
         QTimer.singleShot(10000, finish_prediction_simulation)
