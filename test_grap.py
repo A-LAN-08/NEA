@@ -178,13 +178,20 @@ Time Period: {selected_time_period}
 
         self.pd_set_frame.setEnabled(False)
         self.prediction_result_label.setText("Processing... (10s)")
-        QTimer.singleShot(10000, self.finish_prediction_simulation)
-    
-    def finish_prediction_simulation(self) -> None:
-        print("Prediction finished.") # DEBUG
-        self.pd_set_frame.setEnabled(True)
-        self.prediction_result_label.setText("Prediction complete: Stock price expected to rise by 5% over the next month.") # Temp text to show completion
-        QMessageBox.information(self, "Prediction Status", "Successful")
+
+        def finish_prediction_simulation():
+            print("Prediction finished.")  # DEBUG
+            self.pd_set_frame.setEnabled(True)
+            self.prediction_result_label.setText(f"""
+        --- INPUTS RECEIVED ---
+        Ticker: {ticker}
+        Prediction Type: {selected_prediction_type}
+        Risk Level: {risk_level}
+        Time Period: {selected_time_period}
+        -----------------------""")  # Temp text to show completion
+            QMessageBox.information(self, "Prediction Status", "Successful")
+
+        QTimer.singleShot(10000, finish_prediction_simulation)
 
     def save_graph(self, input_box) -> None:
         # Function to save the state of the graph when button pressed (TBD: to be developed further)
