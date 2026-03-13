@@ -1,0 +1,12 @@
+
+# Python things
+.venv/
+.idea/
+.git/
+
+# Local storage
+cache_files/
+models/
+
+# UV and others
+uv.lock
