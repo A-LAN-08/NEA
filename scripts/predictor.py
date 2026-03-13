@@ -30,7 +30,7 @@ NYSE_CAL = mcal.get_calendar('NYSE')
 
 # Custom imports
 from data_management import load_data
-from scripts.config import LEDGER_DIR, MODEL_DIR, SENT_DIR, ROOT_DIR
+from scripts.config import LEDGER_DIR, MODEL_DIR, DATA_DIR
 
 ############################################################################
 
@@ -62,7 +62,7 @@ class TrainingManager:
 
     @staticmethod
     def _integrate_sentiment(df: pd.DataFrame, ticker: str, interval: str) -> pd.DataFrame:
-        target_file = os.path.join(SENT_DIR, f"master_sentiment.parquet")
+        target_file = os.path.join(DATA_DIR, f"master_sentiment.parquet")
 
         sent_df = pd.read_parquet(target_file, filters=[('ticker', '==', ticker)])
 
@@ -147,7 +147,6 @@ class TrainingManager:
         if training:
             df = df.dropna()
 
-        # df.to_parquet(os.path.join(ROOT_DIR, "test.parquet"))
         return df
 
     # Evaluate model performance with accuracy and sharpe ratio
@@ -436,36 +435,31 @@ def prediction_saved(ticker: str, interval: str, date) -> bool:
 
 # Run all helper functions to display a prediction
 def run_prediction_pipline(ticker: str, interval: str) -> dict:
-    # try:
-        # Add in technical indicators
-        processed_df, assets = prepare_prediction_data(ticker, interval)
-        if any(v is None for v in [processed_df, assets]): return {}
+    # Add in technical indicators
+    processed_df, assets = prepare_prediction_data(ticker, interval)
+    if any(v is None for v in [processed_df, assets]): return {}
 
-        last_trade_date = processed_df.index[-1]
+    last_trade_date = processed_df.index[-1]
 
-        # Load or create and save the prediction
-        if not prediction_saved(ticker, interval, last_trade_date):
-            # Create a dict with basic information about the state of the prediction and stock
-            is_hour = "h" in interval
-            tech_info = (
-                {1:1, 2:2, 4:4, 8:25} if is_hour else {1:1, 2:2, 5:7, 21:28}, # horizons
-                "h" if is_hour else "d", # period
-                last_trade_date,
-                float(processed_df['Close'].iloc[-1]) # current_price
-            )
+    # Load or create and save the prediction
+    if not prediction_saved(ticker, interval, last_trade_date):
+        # Create a dict with basic information about the state of the prediction and stock
+        is_hour = "h" in interval
+        tech_info = (
+            {1:1, 2:2, 4:4, 8:25} if is_hour else {1:1, 2:2, 5:7, 21:28}, # horizons
+            "h" if is_hour else "d", # period
+            last_trade_date,
+            float(processed_df['Close'].iloc[-1]) # current_price
+        )
 
-            # Generate a prediction
-            forecast_results = generate_forecasts(processed_df, assets, tech_info)
-            save_prediction(ticker, interval, last_trade_date, forecast_results)
+        # Generate a prediction
+        forecast_results = generate_forecasts(processed_df, assets, tech_info)
+        save_prediction(ticker, interval, last_trade_date, forecast_results)
 
-        else:
-            forecast_results = load_prediction(ticker, interval, last_trade_date)
+    else:
+        forecast_results = load_prediction(ticker, interval, last_trade_date)
 
-        return forecast_results
-
-    # except Exception as e:
-    #     print(f"Error - {type(e).__name__}: {e}")
-    #     return {}
+    return forecast_results
 
 # Adds in technical indicators, trains model if needed or loads it
 def prepare_prediction_data(ticker: str, interval: str) -> tuple:

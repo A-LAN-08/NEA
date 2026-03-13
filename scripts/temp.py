@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 from edgar import Company, set_identity
 
-from scripts.config import ROOT_DIR, SENT_DIR, CACHE_DIR, MODEL_DIR, LEDGER_DIR
+from scripts.config import ROOT_DIR, CACHE_DIR, MODEL_DIR, LEDGER_DIR, DATA_DIR
 
 class EndError(Exception):
     pass
@@ -206,14 +206,14 @@ def boost_features(df):
     ).fillna(0)
 
     # 6. Final Save
-    output_file = os.path.join(ROOT_DIR, "cache_sentiment", "sentiment_features.parquet")
+    output_file = os.path.join(ROOT_DIR, "data", "sentiment_features.parquet")
     print(f"Saving model-ready data to {output_file}...")
     df.to_parquet(output_file, index=False)
     print("Done! Ready for the model.")
 
 # Remove them again
 def revert_to_raw():
-    path = os.path.join(ROOT_DIR, "cache_sentiment", "sentiment_features.parquet")
+    path = os.path.join(ROOT_DIR, "data", "sentiment_features.parquet")
     df = pd.read_parquet(path)
 
     # List of engineered columns to remove
@@ -226,7 +226,7 @@ def revert_to_raw():
     df_raw = df.drop(columns=[c for c in to_drop if c in df.columns])
 
     # Save as your new "Source of Truth"
-    new_path = os.path.join(ROOT_DIR, "cache_sentiment", "master_sentiment.parquet")
+    new_path = os.path.join(ROOT_DIR, "data", "master_sentiment.parquet")
     df_raw.to_parquet(new_path, index=False)
     print(f"Reverted to raw data. Columns remaining: {df_raw.columns.tolist()}")
 
@@ -234,7 +234,7 @@ def revert_to_raw():
 """ sentiments """
 # Tests to ensure data integrity
 def run_final_validation():
-    input_file = os.path.join(ROOT_DIR, "cache_sentiment", "sentiment_features.parquet")
+    input_file = os.path.join(ROOT_DIR, "data", "sentiment_features.parquet")
     print(f"Loading {input_file}...")
     df = pd.read_parquet(input_file)
 
@@ -283,7 +283,7 @@ def run_final_validation():
 
 # Tests to ensure data integrity
 def run_stress_test():
-    input_file = os.path.join(ROOT_DIR, "cache_sentiment", "sentiment_features.parquet")
+    input_file = os.path.join(ROOT_DIR, "data", "sentiment_features.parquet")
     df = pd.read_parquet(input_file)
 
     print("--- [STATISTICAL BOUNDARIES] ---")
@@ -356,7 +356,7 @@ def calculate_average_confidence():
 def remove_incomplete():
     ticker_list = {'FIGR', 'AMRZ', 'FNGU', 'TEM', 'VG', 'WM', 'GEV', 'RDDT', 'ALAB', 'KLAR', 'ETH', 'FIG', 'RAL', 'NBIS', 'GLXY', 'CRCL', 'VIK', 'Q', 'TTAN', 'RBRK', 'GRAL', 'SOLS', 'ETHA', 'SARO', 'KRMN', 'FETH', 'BMNR'}
 
-    df = pd.read_parquet(os.path.join(SENT_DIR, "master_sentiment.parquet"))
+    df = pd.read_parquet(os.path.join(DATA_DIR, "master_sentiment.parquet"))
     valid_tickers = json.load(open(os.path.join(ROOT_DIR, "valid_tickers.json")))
     valid_tickers_with_history = json.load(open(os.path.join(ROOT_DIR, "valid_tickers_with_history.json")))
     ticker_map = json.load(open(os.path.join(ROOT_DIR, "ticker_map.json")))
@@ -382,7 +382,7 @@ def remove_incomplete():
 
     ticker_map = {k: v for k, v in ticker_map.items() if v not in ticker_list}
 
-    df.to_parquet(os.path.join(SENT_DIR, "master_sentiment.parquet"))
+    df.to_parquet(os.path.join(DATA_DIR, "master_sentiment.parquet"))
 
     with open(os.path.join(ROOT_DIR, "valid_tickers.json"), "w") as f:
         json.dump(valid_tickers, f)
@@ -397,7 +397,7 @@ def find_missing_files():
     caches = {f for f in os.listdir(CACHE_DIR) if os.path.isdir(os.path.join(CACHE_DIR, f))}
     ledgers = {l.split("_")[0] for l in os.listdir(LEDGER_DIR)}
     models = {f.split("_")[0] for f in os.listdir(MODEL_DIR) if os.path.isdir(os.path.join(MODEL_DIR, f))}
-    sent_tickers = set(pd.read_parquet(os.path.join(SENT_DIR, "master_sentiment.parquet"))['ticker'].unique().tolist())
+    sent_tickers = set(pd.read_parquet(os.path.join(DATA_DIR, "master_sentiment.parquet"))['ticker'].unique().tolist())
 
     # The '&' operator finds items present in ALL sets
     common = caches & ledgers & models
@@ -449,6 +449,51 @@ def find_missing_files():
     # with open(os.path.join(ROOT_DIR, "ticker_map.json"), "w") as f:
     #     json.dump(ticker_map, f)
 
+##############################################################################################################
+
+def cache_refactor():
+
+    tickers = [f for f in os.listdir(CACHE_DIR) if os.path.isdir(os.path.join(CACHE_DIR, f))]
+
+    for ticker in tqdm(tickers):
+        old_folder = os.path.join(CACHE_DIR, ticker)
+        path_1h = os.path.join(old_folder, "1h_data.csv")
+        path_1d = os.path.join(old_folder, "1d_data.csv")
+
+        if os.path.exists(path_1h):
+            shutil.move(path_1h, os.path.join(CACHE_DIR, f"{ticker}_1h.csv"))
+
+        if os.path.exists(path_1d):
+            shutil.move(path_1d, os.path.join(CACHE_DIR, f"{ticker}_1d.csv"))
+
+        shutil.rmtree(old_folder)
+
+def timefy():
+    tickers = os.listdir(CACHE_DIR)
+
+    for ticker in tqdm(tickers):
+        try:
+            df = pd.read_csv(os.path.join(CACHE_DIR, ticker), index_col=0, parse_dates=True)
+
+            df.index = pd.to_datetime(df.index)
+            # df.index = df.index.strftime('%Y-%m-%d %H:%M:%S')
+            if ticker.split("_")[1] == "1h":
+                df = df[:-7]
+            else:
+                df = df[:-2]
+
+            df.index.name = "Date"
+
+            df.to_csv(os.path.join(CACHE_DIR, ticker))
+
+        except:
+            df = df[:-7]
+
+            df.index = pd.to_datetime(df.index)
+            df.index = df.index.strftime('%Y-%m-%d %H:%M:%S')
+            df.index.name = "Date"
+
+            df.to_csv(os.path.join(CACHE_DIR, ticker))
 
 ##############################################################################################################
 
@@ -463,12 +508,17 @@ if __name__ in "__main__":
 
     # revert_to_raw()
 
-    # calculate_average_confidence()
+    calculate_average_confidence()
 
-    find_missing_files()
+    # find_missing_files()
     # remove_incomplete()
 
+    # import folder_trees
+    # folder_trees.generate_tree(ROOT_DIR)
 
+    # cache_refactor()
+
+    # timefy()
 
 
     pass

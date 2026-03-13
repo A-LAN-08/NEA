@@ -18,7 +18,7 @@ from tqdm import tqdm
 from google.cloud import bigquery
 
 # Custom imports
-from scripts.config import CACHE_DIR, LEDGER_DIR, ROOT_DIR, SENT_DIR
+from scripts.config import CACHE_DIR, LEDGER_DIR, ROOT_DIR, DATA_DIR
 
 NYSE_CAL = mcal.get_calendar('NYSE')
 sent_client = bigquery.Client(
@@ -35,9 +35,7 @@ def abs_file(file: str) -> str:
 
 # Helper function to load data for a stock
 def load_data(ticker: str, interval: str = "1d") -> pd.DataFrame | None:
-    ticker_folder = os.path.join(CACHE_DIR, ticker)
-    if not os.path.exists(ticker_folder): os.makedirs(ticker_folder)
-    cache_file = os.path.join(ticker_folder, f"{interval}_data.csv")
+    cache_file = os.path.join(CACHE_DIR, f"{ticker}_{interval}.csv")
 
     # Return cache file if it exists
     if os.path.exists(cache_file):
@@ -78,7 +76,7 @@ def load_data(ticker: str, interval: str = "1d") -> pd.DataFrame | None:
 # Helper function to load the latest n days for a stock
 def peek_data(ticker: str, days: int, interval: str = "15m") -> pd.DataFrame | None:
     # Find data or download if doesn't exist
-    cache_file = os.path.join(CACHE_DIR, ticker, f"{interval}_data.csv")
+    cache_file = os.path.join(CACHE_DIR, f"{ticker}_{interval}.csv")
     if not os.path.exists(cache_file): load_data(ticker, interval)
 
     # Ensure data in correct format
@@ -146,8 +144,7 @@ class UpdateWorker(QThread):
 
     # Helper function to iterate through cache data to update
     def data_updater(self):
-        total = [name for name in os.listdir(CACHE_DIR) if os.path.isdir(os.path.join(CACHE_DIR, name))]
-        # Use 'set' type to keep track of what's done to avoid repetition
+        total = {f.split("_")[0] for f in os.listdir(CACHE_DIR)}
         processed = set()
 
         while len(processed) < len(total):
@@ -185,7 +182,6 @@ class UpdateWorker(QThread):
     # Helper function to update data for a stock
     @staticmethod
     def update_data(ticker):
-        ticker_folder = os.path.join(CACHE_DIR, ticker)
         for interval in ["1h", "1d"]:
             # Get the needed interval format for yfinance from filename
             seconds_map = {"m": 60, "h": 3600, "d": 86400}
@@ -193,7 +189,7 @@ class UpdateWorker(QThread):
             interval_seconds = seconds_map[unit] * value
 
             # Load existing cached stock data from file
-            cache_file = os.path.join(ticker_folder, f"{interval}_data.csv")
+            cache_file = os.path.join(CACHE_DIR, f"{ticker}_{interval}.csv")
             if not os.path.exists(cache_file): continue
 
             df = load_data(ticker, interval)
@@ -234,13 +230,13 @@ class UpdateWorker(QThread):
 
     @staticmethod
     def sentiment_update():
-        with open(os.path.join(ROOT_DIR, "ticker_map.json"), "r") as f:
+        with open(os.path.join(DATA_DIR, "ticker_map.json"), "r") as f:
             ticker_map = json.load(f)
 
-        with open(os.path.join(ROOT_DIR, "valid_tickers_with_history.json"), "r") as f:
+        with open(os.path.join(DATA_DIR, "valid_tickers_with_history.json"), "r") as f:
             company_tickers = json.load(f)
 
-        sent_dir = os.path.join(SENT_DIR, "master_sentiment.parquet")
+        sent_dir = os.path.join(DATA_DIR, "master_sentiment.parquet")
         sent_df = pd.read_parquet(sent_dir)
 
         start_date = sent_df["event_date"].max() - timedelta(days=1)
@@ -250,7 +246,7 @@ class UpdateWorker(QThread):
             print("Do not need to update")
             return
 
-        company_names = [name for name, ticker in ticker_map.items() if ticker in set(company_tickers)]
+        company_names = [name.lower() for name, ticker in ticker_map.items() if ticker in set(company_tickers)]
         half = len(company_names) // 2
         regex_parts = [
             "|".join([rf"\b{re.escape(name)}\b" for name in company_names[:half]]),

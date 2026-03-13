@@ -5,23 +5,26 @@ description = "Predict the stock market."
 requires-python = ">=3.12"
 dependencies = [
     "bcrypt>=5.0.0",
-    "cryptography>=46.0.4",
-    "darkdetect>=0.8.0",
+    "cryptography>=46.0.5",
+    "db-dtypes>=1.4.4",
+    "edgartools>=5.23.2",
     "finplot>=1.9.7",
-    "gdeltdoc>=1.12.0",
+    "folder-trees>=1.0.0",
+    "google-cloud-bigquery>=3.40.1",
     "joblib>=1.5.3",
     "lightgbm>=4.6.0",
     "matplotlib>=3.10.8",
-    "pandas>=3.0.0",
-    "pandas-market-calendars>=5.3.1",
+    "numpy>=2.4.3",
+    "pandas>=3.0.1",
+    "pandas-market-calendars>=5.3.1.2",
     "pyqt6>=6.10.2",
     "scikit-learn>=1.8.0",
     "seaborn>=0.13.2",
-    "setuptools>=82.0.1",
-    "sweetviz>=2.3.1",
     "ta-lib>=0.6.8",
     "time-machine>=3.2.0",
-    "tqdm>=4.67.2",
-    "vadersentiment>=3.3.2",
-    "yfinance>=1.1.0",
+    "tqdm>=4.67.3",
+    "yfinance>=1.2.0",
 ]
+
+[tool.uv.sources]
+folder-trees = { path = "../.custom_packages/folder_trees", editable = true }
