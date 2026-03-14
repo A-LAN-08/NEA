@@ -61,7 +61,7 @@ class TrainingManager:
         self.__test_size = 0.2 # How much of data used to test vs train
 
     @staticmethod
-    def _integrate_sentiment(df: pd.DataFrame, ticker: str, interval: str) -> pd.DataFrame:
+    def _integrate_sentiment(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
         target_file = os.path.join(DATA_DIR, f"master_sentiment.parquet")
 
         sent_df = pd.read_parquet(target_file, filters=[('ticker', '==', ticker)])
@@ -73,22 +73,28 @@ class TrainingManager:
         sent_df['sentiment_impact'] = sent_df['avg_tone'] * np.log1p(sent_df['article_count'])
 
         # Sentiment simple moving averages
-        sent_df['sentiment_sma_7d'] = sent_df['avg_tone'].transform(lambda x: x.rolling(window=7, min_periods=1).mean())
-        sent_df['sentiment_sma_30d'] = sent_df['avg_tone'].transform(lambda x: x.rolling(window=30, min_periods=1).mean())
+        sent_df['sentiment_sma_7d'] = sent_df['avg_tone'].rolling(7, min_periods=1).mean()
+        sent_df['sentiment_sma_30d'] = sent_df['avg_tone'].rolling(30, min_periods=1).mean()
 
         # Sentiment Volatility (Rolling Standard Deviation)
-        sent_df['sentiment_volatility_7d'] = sent_df['avg_tone'].transform(
-            lambda x: x.rolling(window=7, min_periods=1).std().fillna(0)
-        )
+        sent_df['sentiment_volatility_7d'] = sent_df['avg_tone'].rolling(7, min_periods=1).std().fillna(0)
+
         # Sentiment Momentum (The gap between short and long term vibes)
         # Positive = Sentiment is improving; Negative = Sentiment is cooling off
         sent_df['sentiment_momentum'] = sent_df['sentiment_sma_7d'] - sent_df['sentiment_sma_30d']
 
         # Sentiment volume Z-Score (The "Shock" factor)
         # This identifies days when news volume is significantly higher than usual for THAT specific ticker
-        sent_df['sentiment_volume_zscore'] = sent_df['article_count'].transform(
-            lambda x: (x - x.rolling(30).mean()) / (x.rolling(30).std() + 1e-9)
+        sent_df['sentiment_volume_zscore'] = (
+                sent_df['article_count'] / (sent_df['article_count'].rolling(30).mean() + 1e-9)
         ).fillna(0)
+
+        # Other sentiment features
+        sent_df['sentiment_shock'] = sent_df['avg_tone'].diff().fillna(0)
+        sent_df['negative_pressure'] = (
+            np.abs(np.minimum(sent_df['avg_tone'], 0)) * np.log1p(sent_df['article_count'])
+        )
+        sent_df['days_since_news'] = (sent_df['article_count'] > 0).astype(int).groupby((sent_df['article_count'] > 0).cumsum()).cumcount()
 
         sent_df['merge_date'] = sent_df['event_date'] + pd.Timedelta(days=1)
         sent_df = sent_df[sent_df.columns.difference(['ticker', 'event_date'])]
@@ -105,28 +111,28 @@ class TrainingManager:
 
     # Calculate technical indicators
     def calculate_technical_indicators(self, df: pd.DataFrame, ticker: str, interval: str, training: bool = True) -> pd.DataFrame:
-        df = self._integrate_sentiment(df, ticker, interval)
+        df = self._integrate_sentiment(df, ticker)
 
         # Horizon (h) targets for selected period (p)
         p = "h" if "h" in interval else "d"
         for h in [1, 2, 4, 5, 8, 21]:
-            df[f'target_cls_{h}{p}'] = df['Close'].shift(-h).gt(df['Close']).astype(int)
+            df[f'target_cls_{h}{p}'] = df['Adj Close'].shift(-h).gt(df['Adj Close']).astype(int)
 
-        df['return'] = df['Close'].pct_change()
+        df['return'] = df['Adj Close'].pct_change()
         for i in range(1, 4): df[f'return_lag_{i}'] = df['return'].shift(i)
 
         # Technical indicators
-        df['RSI'] = talib.RSI(df['Close'], timeperiod=14)
-        macd, _, macdhist = talib.MACD(df['Close'], fastperiod=12, slowperiod=26, signalperiod=9)
+        df['RSI'] = talib.RSI(df['Adj Close'], timeperiod=14)
+        macd, _, macdhist = talib.MACD(df['Adj Close'], fastperiod=12, slowperiod=26, signalperiod=9)
         df['MACD_Hist'] = macdhist
-        df['ADX'] = talib.ADX(df['High'], df['Low'], df['Close'], timeperiod=14)
-        df['ATR'] = talib.ATR(df['High'], df['Low'], df['Close'], timeperiod=14)
-        df['MA_200'] = talib.SMA(df['Close'], timeperiod=200)
-        df['PDMA_200'] = (df['Close'] / df['MA_200']) - 1
+        df['ADX'] = talib.ADX(df['High'], df['Low'], df['Adj Close'], timeperiod=14)
+        df['ATR'] = talib.ATR(df['High'], df['Low'], df['Adj Close'], timeperiod=14)
+        df['MA_200'] = talib.SMA(df['Adj Close'], timeperiod=200)
+        df['PDMA_200'] = (df['Adj Close'] / df['MA_200']) - 1
 
-        df['OBV'] = talib.OBV(df['Close'], df['Volume'])
-        upper, mid, lower = talib.BBANDS(df['Close'], timeperiod=20)
-        df['BBP'] = (df['Close'] - lower) / (upper - lower)
+        df['OBV'] = talib.OBV(df['Adj Close'], df['Volume'])
+        upper, mid, lower = talib.BBANDS(df['Adj Close'], timeperiod=20)
+        df['BBP'] = (df['Adj Close'] - lower) / (upper - lower)
         df['ROC'] = talib.ROC(df['Close'], timeperiod=10)
 
         # Deviations using all of OHLC
@@ -140,9 +146,6 @@ class TrainingManager:
         df['hour'] = df.index.hour
         df['day_of_week'] = df.index.dayofweek
         df['month'] = df.index.month
-
-        if not training:
-            df.loc[df['hour'] < 9, 'hour'] = 9
 
         if training:
             df = df.dropna()
@@ -275,7 +278,7 @@ class TrainingManager:
 
     # Save models for all horizons with the best performing model type
     def _save_winning_strategy_assets(self, ticker: str, interval: str, full_results: dict,
-                                      features_data: dict, targets_dataframe: pd.DataFrame) -> None:
+                                      features_data: pd.DataFrame, targets_dataframe: pd.DataFrame) -> None:
         # Create the folder for this specific stock's model data to save
         save_folder = os.path.join(MODEL_DIR, f"{ticker}_{interval}")
         if not os.path.exists(save_folder): os.makedirs(save_folder)
@@ -300,18 +303,27 @@ class TrainingManager:
 
         for h in model_bundle["horizons"]:
             target_col = f'target_cls_{h}{period}'
-            # We must dropna for this specific target just to train this specific horizon
+
             valid_idx = targets_dataframe[target_col].notna()
+            x_final = scaled_features[valid_idx.values]
+            y_final = targets_dataframe[target_col][valid_idx]
 
             # Train Classifier
             if best_model_type == 'LGBM':
-                model = LGBMClassifier(n_estimators=100, random_state=self.seed, verbose=-1)
-            elif best_model_type == 'Lasso':
-                model = LogisticRegression(penalty='l1', solver='liblinear', class_weight='balanced')
-            else:
-                model = SVC(kernel='rbf', probability=True, class_weight='balanced')
+                up_days = y_final.sum()
+                down_days = len(y_final) - up_days
+                spw = down_days / up_days if up_days > 0 else 1.0
 
-            model.fit(scaled_features[valid_idx], targets_dataframe[target_col][valid_idx])
+                model = LGBMClassifier(n_estimators=100, learning_rate=0.05, random_state=self.seed,
+                    scale_pos_weight=spw, verbose=-1, device="gpu", gpu_platform_id=0, gpu_device_id=0)
+            elif best_model_type == 'Lasso':
+                model = LogisticRegression(penalty='l1', solver='liblinear', random_state=self.seed, class_weight='balanced')
+            else:  # SVC
+                model = SVC(
+                    kernel='rbf', C=1.0, random_state=self.seed, class_weight='balanced', probability=True)
+
+                # Fit the finalized model
+            model.fit(x_final, y_final)
             model_bundle["classifiers"][h] = model
 
         with open(f'{save_folder}/metadata.json', 'w') as f: json.dump(meta, f)
@@ -339,7 +351,7 @@ class TrainingManager:
 
         # Remove "Cheat" columns and raw price data AI shouldn't see directly
         # ('target' as is answer key, 'Close' as is too easy to cheat with)
-        drop_columns = [c for c in df.columns if 'target' in c or c in ['Open', 'High', 'Low', 'Close', 'Volume', 'MA_200', 'return']]
+        drop_columns = [c for c in df.columns if 'target' in c or c in ['Open', 'High', 'Low', 'Close', "Adj Close", 'Volume', 'MA_200', 'return']]
         train_columns = [c for c in df.columns if c not in drop_columns]
 
         # Create input features and answers
@@ -409,8 +421,8 @@ def load_prediction(ticker: str, interval: str, date: datetime) -> dict:
 
     # Rebuild the forecast_results dict
     forecast_results = {}
-    for i, horizon in zip(range(0,3), [1,5,21]):
-        forecast_results[horizon] = {
+    for i, step in enumerate([1, 2, 4, 8] if "h" in interval else [1, 2, 5, 21]):
+        forecast_results[step] = {
             "current_price": float(match_dicts[i]['Current_Price']),
             'price': float(match_dicts[i]['Predicted_Price']),
             'up': float(match_dicts[i]['Predicted_Max']),
@@ -434,7 +446,7 @@ def prediction_saved(ticker: str, interval: str, date) -> bool:
     return not match.empty
 
 # Run all helper functions to display a prediction
-def run_prediction_pipline(ticker: str, interval: str) -> dict:
+def run_prediction_pipeline(ticker: str, interval: str) -> dict:
     # Add in technical indicators
     processed_df, assets = prepare_prediction_data(ticker, interval)
     if any(v is None for v in [processed_df, assets]): return {}
@@ -506,7 +518,7 @@ def get_market_dates(latest_date, horizons, period):
     if latest_date.tz is None:
         latest_date = latest_date.tz_localize('UTC')
 
-    end_search = latest_date + pd.Timedelta(days=30)
+    end_search = latest_date + pd.Timedelta(days=35)
     schedule = NYSE_CAL.schedule(start_date=latest_date, end_date=end_search)
 
     if period == "d":
@@ -527,12 +539,14 @@ def get_market_dates(latest_date, horizons, period):
 
         else:
             target_dt = latest_date + timedelta(days=time_dif)
-            if target_dt.weekday() == 5:
-                target_dt += timedelta(days=2)
 
-            # Holiday
-            if target_dt.strftime('%Y-%m-%d') not in valid_times:
-                target_dt = None
+            # Keep rolling forward if it lands on a weekend or holiday
+            while target_dt.strftime("%Y-%m-%d") not in valid_times:
+                target_dt += timedelta(days=1)
+
+                if (target_dt - latest_date).days > 35:
+                    target_dt = None
+                    break
 
         market_targets[step] = target_dt
 

@@ -18,7 +18,7 @@ from tqdm import tqdm
 from google.cloud import bigquery
 
 # Custom imports
-from scripts.config import CACHE_DIR, LEDGER_DIR, ROOT_DIR, DATA_DIR
+from scripts.config import CACHE_DIR, LEDGER_DIR, DATA_DIR
 
 NYSE_CAL = mcal.get_calendar('NYSE')
 sent_client = bigquery.Client(
@@ -159,7 +159,7 @@ class UpdateWorker(QThread):
                 self.update_data(ticker)
 
                 processed.add(ticker)
-                self.msleep(random.uniform(0.05, 0.2)*1000)
+                self.msleep(int(random.uniform(0.05, 0.2)*1000))
                 continue
 
             # Else continue with regular update loop
@@ -174,7 +174,7 @@ class UpdateWorker(QThread):
                 processed.add(ticker)
 
                 # Check for priority again after every file
-                self.msleep(random.uniform(0.05, 0.2)*1000)
+                self.msleep(int(random.uniform(0.05, 0.2)*1000))
                 if self.priority_tickers: break
 
         self.progress_msg.emit("Completed data update")

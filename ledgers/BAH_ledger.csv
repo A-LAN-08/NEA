@@ -1,5 +1,0 @@
-Interval,Open_Date,Target_Date,Horizon,Current_Price,Predicted_Price,Predicted_Max,Predicted_Min,Direction,Probability,Actual_Price,Is_Correct
-1d,2026-03-12 00:00,2026-03-13 00:00,1d,77.11,76.95,80.42,73.48,DOWN ▼,52.5%,,
-1d,2026-03-12 00:00,2026-03-16 00:00,2d,77.11,77.91,83.39,72.43,UP ▲,58.6%,,
-1d,2026-03-12 00:00,2026-03-19 00:00,7d,77.11,79.06,88.41,69.71,UP ▲,63.2%,,
-1d,2026-03-12 00:00,2026-04-09 00:00,28d,77.11,87.71,99.27,76.14,UP ▲,85.0%,,

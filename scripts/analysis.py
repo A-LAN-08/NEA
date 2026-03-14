@@ -12,7 +12,7 @@ from joblib import Parallel, delayed
 import time_machine
 
 from scripts.config import CACHE_DIR, DATA_DIR
-from predictor import run_prediction_pipline
+from predictor import run_prediction_pipeline
 from data_management import UpdateWorker, load_data, NYSE_CAL
 
 logging.getLogger('yfinance').setLevel(logging.CRITICAL)
@@ -22,7 +22,7 @@ logging.getLogger('yfinance').setLevel(logging.CRITICAL)
 def process_single_ticker(ticker):
     for interval in ["1h", "1d"]:
         try:
-            run_prediction_pipline(ticker, interval)
+            run_prediction_pipeline(ticker, interval)
         except Exception as e:
             pass
 

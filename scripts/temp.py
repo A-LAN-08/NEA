@@ -7,6 +7,7 @@ import shutil
 
 import pandas as pd
 import numpy as np
+import datetime
 from google.cloud import bigquery
 from pandas.tseries.holiday import USFederalHolidayCalendar
 from pandas.tseries.offsets import CustomBusinessDay
@@ -15,11 +16,12 @@ from tqdm import tqdm
 from edgar import Company, set_identity
 
 from scripts.config import ROOT_DIR, CACHE_DIR, MODEL_DIR, LEDGER_DIR, DATA_DIR
+from predictor import load_prediction, run_prediction_pipline
 
 class EndError(Exception):
     pass
 
-set_identity("Alex adlanecki@outlook.com")
+# set_identity("Alex adlanecki@outlook.com")
 
 ##############################################################################################################
 
@@ -508,7 +510,7 @@ if __name__ in "__main__":
 
     # revert_to_raw()
 
-    calculate_average_confidence()
+    # calculate_average_confidence()
 
     # find_missing_files()
     # remove_incomplete()
@@ -519,6 +521,10 @@ if __name__ in "__main__":
     # cache_refactor()
 
     # timefy()
+
+    # print(load_prediction("A", "1d", datetime.datetime(2026, 3, 12)))
+
+    # run_prediction_pipline("A", "1d")
 
 
     pass
