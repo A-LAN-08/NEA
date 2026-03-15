@@ -1,25 +1,29 @@
 
-import json
-import time
-import re
-import os
-import shutil
-
-import pandas as pd
-import numpy as np
-import datetime
-from google.cloud import bigquery
-from pandas.tseries.holiday import USFederalHolidayCalendar
-from pandas.tseries.offsets import CustomBusinessDay
-import matplotlib.pyplot as plt
-from tqdm import tqdm
-from edgar import Company, set_identity
-
-from scripts.config import ROOT_DIR, CACHE_DIR, MODEL_DIR, LEDGER_DIR, DATA_DIR
-from predictor import load_prediction, run_prediction_pipline
-
-class EndError(Exception):
-    pass
+# import os
+#
+# os.environ["PYQTGRAPH_QT_LIB"] = "None"  # Stops libraries from hunting for Qt
+# os.environ["PYTHONINSPECT"] = ""         # Prevents the "freeze" on exit
+#
+# import json
+# import time
+# import re
+# import shutil
+#
+# import pandas as pd
+# import numpy as np
+# import datetime
+# from google.cloud import bigquery
+# from pandas.tseries.holiday import USFederalHolidayCalendar
+# from pandas.tseries.offsets import CustomBusinessDay
+# import matplotlib.pyplot as plt
+# from tqdm import tqdm
+# from edgar import Company, set_identity
+#
+# from config import ROOT_DIR, CACHE_DIR, MODEL_DIR, LEDGER_DIR, DATA_DIR
+from predictor import load_prediction, run_prediction_pipeline
+#
+# class EndError(Exception):
+#     pass
 
 # set_identity("Alex adlanecki@outlook.com")
 
@@ -525,6 +529,10 @@ if __name__ in "__main__":
     # print(load_prediction("A", "1d", datetime.datetime(2026, 3, 12)))
 
     # run_prediction_pipline("A", "1d")
+
+    print("Starting...")
+    r = run_prediction_pipeline("A", "1h")
+    print(r)
 
 
     pass

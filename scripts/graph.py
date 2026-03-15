@@ -13,11 +13,11 @@ from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QApplication
 
 # Custom imports
-from data_management import load_data
+from scripts.data_management import load_data
 
 # Type hinting imports
 if TYPE_CHECKING:
-    from default_gui import MainWindow
+    from scripts.default_gui import MainWindow
 
 ############################################################################
 

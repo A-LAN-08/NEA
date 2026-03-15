@@ -18,7 +18,7 @@ from tqdm import tqdm
 from google.cloud import bigquery
 
 # Custom imports
-from scripts.config import CACHE_DIR, LEDGER_DIR, DATA_DIR
+from scripts.config import CACHE_DIR, LEDGER_DIR, DATA_DIR, IMG_DIR
 
 NYSE_CAL = mcal.get_calendar('NYSE')
 sent_client = bigquery.Client(
@@ -29,7 +29,6 @@ sent_client = bigquery.Client(
 ############################################################################
 
 # Helper function to find the absolute path of image files
-from scripts.config import IMG_DIR
 def abs_file(file: str) -> str:
     return os.path.join(IMG_DIR, file).replace("\\", "/")
 
@@ -139,6 +138,7 @@ class UpdateWorker(QThread):
     def run(self):
         # self.data_updater()
         self.sentiment_update()
+        self.update_spy()
         # self.check_accuracy()
         self.updates_finished.emit()
 
@@ -227,6 +227,51 @@ class UpdateWorker(QThread):
                 updated_df = pd.concat([df, new_data])
                 updated_df = updated_df[~updated_df.index.duplicated(keep='last')]
                 updated_df.to_csv(cache_file)
+
+    @staticmethod
+    def update_spy():
+        for interval in ["1h", "1d"]:
+            # Get the needed interval format for yfinance from filename
+            seconds_map = {"m": 60, "h": 3600, "d": 86400}
+            unit, value = ''.join(filter(str.isalpha, interval)), int(''.join(filter(str.isdigit, interval)))
+            interval_seconds = seconds_map[unit] * value
+
+            # Load existing cached stock data from file
+            cache_file = os.path.join(DATA_DIR, f"SPY_data_{interval}.csv")
+
+            df = pd.read_parquet(cache_file)
+            df.index.name = "Date"
+            df.index = pd.to_datetime(df.index, utc=True).tz_localize(None)
+
+            # Find time period for which data needs to be downloaded
+            time_diff = datetime.now(timezone.utc).replace(tzinfo=None) - df.index[-1]
+            period = f"{int(min((time_diff.total_seconds() // 86400) + 5, 700))}d"
+
+            needs_update = (time_diff.total_seconds() >= interval_seconds)
+            if needs_update:
+                # Fetch for the period that has passed
+                new_data = yf.download("SPY", period=period, interval=interval, progress=False, auto_adjust=False)
+                if new_data.empty: return
+
+                new_data.index = pd.to_datetime(new_data.index, utc=True).tz_localize(None)
+                new_data.index.name = "Date"
+
+                now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+                schedule = NYSE_CAL.schedule(start_date=now_utc_naive, end_date=now_utc_naive)
+
+                if not schedule.empty:
+                    mkt_open = schedule.iloc[0]['market_open'].replace(tzinfo=None)
+                    mkt_close = schedule.iloc[0]['market_close'].replace(tzinfo=None)
+
+                    # If we are currently between open and close, the last downloaded row is "Live"
+                    if mkt_open <= now_utc_naive <= mkt_close:
+                        new_data = new_data.iloc[:-1]
+
+                # Append and save
+                updated_df = pd.concat([df, new_data])
+                updated_df = updated_df[~updated_df.index.duplicated(keep='last')]
+                updated_df.to_parquet(cache_file)
+
 
     @staticmethod
     def sentiment_update():

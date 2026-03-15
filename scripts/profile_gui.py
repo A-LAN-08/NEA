@@ -20,14 +20,14 @@ from PyQt6.QtWidgets import (
 plt.ioff()
 
 # Custom imports
-from data_management import abs_file, peek_data, validate_ticker
-from profile_management import Profile
-from custom_widgets import add_to_layout, create_circle_label, create_slider_layout, CustomButton
+from scripts.data_management import abs_file, peek_data, validate_ticker
+from scripts.profile_management import Profile
+from scripts.custom_widgets import add_to_layout, create_circle_label, create_slider_layout, CustomButton
 from scripts.config import ICON_DIR
 
 # Type hinting imports
 if TYPE_CHECKING:
-    from default_gui import MainWindow
+    from scripts.default_gui import MainWindow
 
 ############################################################################
 

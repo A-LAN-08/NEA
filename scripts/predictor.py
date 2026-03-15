@@ -2,26 +2,32 @@
 # Standard library imports
 import json
 import os
+from pathlib import Path
 import shutil
 import warnings
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta
 
 # External library imports
 import joblib
 import numpy as np
 import pandas as pd
 import pandas_market_calendars as mcal
-from pandas.tseries.holiday import USFederalHolidayCalendar
-from pandas.tseries.offsets import CustomBusinessDay
 import talib
+from scipy.stats import linregress
+from pykalman import KalmanFilter
 import yfinance as yf
 from lightgbm import LGBMClassifier
+from lightgbm import Booster as LGBMBooster
 from PyQt6.QtCore import QThread, pyqtSignal
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.metrics import accuracy_score
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
+import torch
+import torch.nn as nn
+from skorch import NeuralNetClassifier
+from safetensors.torch import save_file, load_file
 
 # Set environment variables and filters
 os.environ["LOKY_MAX_CPU_COUNT"] = "1"
@@ -29,7 +35,7 @@ warnings.filterwarnings("ignore")
 NYSE_CAL = mcal.get_calendar('NYSE')
 
 # Custom imports
-from data_management import load_data
+from scripts.data_management import load_data
 from scripts.config import LEDGER_DIR, MODEL_DIR, DATA_DIR
 
 ############################################################################
@@ -48,10 +54,99 @@ class TrainingWorker(QThread):
     # Run the prediction for its instance
     def run(self):
         try:
-            forecast_results = run_prediction_pipline(self.ticker, self.interval)
+            forecast_results = run_prediction_pipeline(self.ticker, self.interval)
             self.training_finished.emit(forecast_results)
         except Exception as e:
             self.training_error.emit(str(e))
+
+class LSTMBrain(nn.Module):
+    def __init__(self, input_dim, hidden_dim=64, layers=2):
+        super().__init__()
+        self.lstm = nn.LSTM(input_dim, hidden_dim, layers, batch_first=True)
+        self.fc = nn.Linear(hidden_dim, 1)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        _, (hn, _) = self.lstm(x) # We only want the 'final thought' of the last layer
+        return self.sigmoid(self.fc(hn[-1])).squeeze(-1)
+
+class LSTM:
+    def __init__(self, seed: int):
+        self.seed = seed
+
+    def train(self, features_train: pd.DataFrame, target_train: pd.Series, features_test: pd.DataFrame,
+                    target_test: pd.Series, price_returns: np.ndarray) -> dict:
+
+        data_normalizer = StandardScaler()
+
+        # Scale the data first
+        features_train_normalized = data_normalizer.fit_transform(features_train)
+        features_test_normalized = data_normalizer.transform(features_test)
+
+        # Walk-Forward Validation
+        time_splitter = TimeSeriesSplit(n_splits=3)
+        validation_scores = []
+
+        for train_idx, val_idx in time_splitter.split(features_train_normalized):
+            # Create sequences for this specific fold
+            x_fold_train, y_fold_train = self.create_3d_sequences(features_train_normalized[train_idx], target_train.iloc[train_idx].values)
+            x_fold_val, y_fold_val = self.create_3d_sequences(features_train_normalized[val_idx], target_train.iloc[val_idx].values)
+
+            if len(x_fold_train) == 0 or len(x_fold_val) == 0: continue
+
+            fold_model = self.get_lstm_competitor(input_dim=x_fold_train.shape[2])
+            fold_model.fit(x_fold_train, y_fold_train)
+            validation_scores.append(fold_model.score(x_fold_val, y_fold_val))
+
+        # Turn into 3D "Movies" (14-day lookback)
+        x_train_3d, y_train_3d = self.create_3d_sequences(features_train_normalized, target_train.values)
+        x_test_3d, y_test_3d = self.create_3d_sequences(features_test_normalized, target_test.values)
+
+        # Train
+        model = self.get_lstm_competitor(input_dim=x_train_3d.shape[2])
+        model.fit(x_train_3d, y_train_3d)
+
+        test_predictions = model.predict(x_test_3d)
+
+        accuracy, sharpe, abs_sharpe, needs_flip = TrainingManager.evaluate_performance(
+            target_test.iloc[14:],
+            test_predictions,
+            price_returns[14:]
+        )
+
+        return {
+            'model_type': 'LSTM',
+            'accuracy': accuracy,
+            'walk_forward_accuracy': np.mean(validation_scores) if validation_scores else 0,
+            'sharpe_ratio': sharpe,
+            'absolute_sharpe': abs_sharpe,
+            'logic_flipped': needs_flip,
+            'raw_predictions': test_predictions,
+            'trained_model_object': model,
+            'feature_scaler': data_normalizer
+        }
+
+    @staticmethod
+    def get_lstm_competitor(input_dim):
+        return NeuralNetClassifier(
+            LSTMBrain,
+            module__input_dim=input_dim,
+            max_epochs=20,
+            lr=0.001,
+            iterator_train__shuffle=False,  # Important for time-series!
+            device='cuda' if torch.cuda.is_available() else 'cpu',
+            verbose=0,
+            criterion=nn.BCELoss
+        )
+
+    @staticmethod
+    def create_3d_sequences(data, targets, window_size=14):
+        x, y = [], []
+        for i in range(len(data) - window_size):
+            x.append(data[i: i + window_size])
+            y.append(targets[i + window_size])
+        return np.array(x).astype(np.float32), np.array(y).astype(np.float32)
+
 
 # Class to control and train models
 class TrainingManager:
@@ -109,13 +204,21 @@ class TrainingManager:
 
         return df
 
+    @staticmethod
+    def calculate_hurst(series, window=100):
+        if len(series) < window: return 0.5
+        lags = range(2, 20)
+        tau = [np.sqrt(np.std(np.subtract(series[lag:], series[:-lag]))) + 1e-9 for lag in lags]
+        poly = np.polyfit(np.log(lags), np.log(tau), 1)
+        return poly[0] * 2.0
+
     # Calculate technical indicators
     def calculate_technical_indicators(self, df: pd.DataFrame, ticker: str, interval: str, training: bool = True) -> pd.DataFrame:
         df = self._integrate_sentiment(df, ticker)
 
         # Horizon (h) targets for selected period (p)
         p = "h" if "h" in interval else "d"
-        for h in [1, 2, 4, 5, 8, 21]:
+        for h in ([1,2,4,8] if "h" in interval else [1,2,5,21]):
             df[f'target_cls_{h}{p}'] = df['Adj Close'].shift(-h).gt(df['Adj Close']).astype(int)
 
         df['return'] = df['Adj Close'].pct_change()
@@ -141,6 +244,47 @@ class TrainingManager:
         df['upper_shadow_pct'] = (df['High'] - df[['Open', 'Close']].max(axis=1)) / df['Close']
         df['lower_shadow_pct'] = (df[['Open', 'Close']].min(axis=1) - df['Low']) / df['Close']
 
+        # Hurst Exponent
+        df['Hurst_Exponent'] = df['Close'].rolling(window=100, min_periods=100).apply(self.calculate_hurst, raw=True)
+        df['Hurst_Exponent'] = df['Hurst_Exponent'].fillna(0.5)
+
+        # Kalman Filter
+        def get_kalman_filter(series):
+            kf = KalmanFilter(transition_matrices=[1],
+                              observation_matrices=[1],
+                              initial_state_mean=series.iloc[0],
+                              initial_state_covariance=1,
+                              observation_covariance=1,
+                              transition_covariance=0.01)
+            state_means, _ = kf.filter(series.values)
+            return state_means.flatten()
+
+        df['Kalman_Price'] = get_kalman_filter(df['Close'])
+        df['Kalman_Dev'] = (df['Close'] - df['Kalman_Price']) / df['Kalman_Price']  # Deviation from "True" price
+
+        # Efficiency ratio
+        price_diff = df['Close'].diff(20).abs()
+        volatility = df['Close'].diff().abs().rolling(20).sum()
+        df['Efficiency_Ratio'] = price_diff / volatility  # 1.0 = Strong Trend, 0.0 = Choppy/Noisy
+
+        # Market context
+        spy_data = pd.read_parquet(os.path.join(DATA_DIR, f'SPY_data_{interval}.parquet'))
+        spy_data.index.name = "Date"
+        spy_data.index = pd.to_datetime(spy_data.index, utc=True).tz_localize(None)
+        spy_data = spy_data[~spy_data.index.duplicated(keep='first')]
+
+        aligned_market = spy_data.reindex(df.index).ffill()
+        market_returns = aligned_market['Close'].pct_change()
+        stock_returns = df['return']
+
+        # Rolling Beta (60-period): Covariance(stock, market) / Variance(market)
+        rolling_cov = stock_returns.rolling(window=60).cov(market_returns)
+        rolling_var = market_returns.rolling(window=60).var()
+        df['Market_Beta'] = (rolling_cov / rolling_var + 1e-9).fillna(1.0)  # Assume 1.0 if no data
+
+        # Relative Strength: Ratio of stock price to market price (normalized)
+        df['Relative_Strength'] = (df['Adj Close'] / aligned_market['Close']).pct_change().fillna(0)
+
         # Other indicators
         df['vol_ratio'] = df["return"].rolling(5).std() / df["return"].rolling(50).std()
         df['hour'] = df.index.hour
@@ -154,7 +298,7 @@ class TrainingManager:
 
     # Evaluate model performance with accuracy and sharpe ratio
     @staticmethod
-    def _evaluate_performance(actual_direction: pd.Series, predicted_direction: np.ndarray, actual_returns: np.ndarray):
+    def evaluate_performance(actual_direction: pd.Series, predicted_direction: np.ndarray, actual_returns: np.ndarray):
         # How often was the AI right about Up vs Down?
         hit_rate = accuracy_score(actual_direction, predicted_direction)
         # Following the AI, what would a daily wallet look like?
@@ -196,7 +340,7 @@ class TrainingManager:
         test_predictions = model.predict(features_test_normalized)
 
         # Get the score
-        accuracy, sharpe, abs_sharpe, needs_flip = self._evaluate_performance(target_test, test_predictions,price_returns)
+        accuracy, sharpe, abs_sharpe, needs_flip = self.evaluate_performance(target_test, test_predictions,price_returns)
         # Return all the information from the model
         return {'model_type': 'LGBM', 'accuracy': accuracy, 'walk_forward_accuracy': np.mean(validation_scores),
                 'sharpe_ratio': sharpe, 'absolute_sharpe': abs_sharpe, 'logic_flipped': needs_flip,
@@ -232,7 +376,7 @@ class TrainingManager:
         test_predictions = model.predict(features_test_normalized)
 
         # Get the score
-        accuracy, sharpe, abs_sharpe, needs_flip = self._evaluate_performance(target_test, test_predictions, price_returns)
+        accuracy, sharpe, abs_sharpe, needs_flip = self.evaluate_performance(target_test, test_predictions, price_returns)
         # Return all the information from the model
         return {'model_type': 'Lasso', 'accuracy': accuracy, 'walk_forward_accuracy': np.mean(validation_scores),
             'sharpe_ratio': sharpe, 'absolute_sharpe': abs_sharpe, 'logic_flipped': needs_flip,
@@ -269,12 +413,18 @@ class TrainingManager:
         test_predictions = model.predict(features_test_normalized)
 
         # Get the score
-        accuracy, sharpe, abs_sharpe, needs_flip = self._evaluate_performance(target_test, test_predictions, price_returns)
+        accuracy, sharpe, abs_sharpe, needs_flip = self.evaluate_performance(target_test, test_predictions, price_returns)
         # Return all the information from the model
         return {
             'model_type': 'SVC', 'accuracy': accuracy, 'walk_forward_accuracy': np.mean(validation_scores),
             'sharpe_ratio': sharpe, 'absolute_sharpe': abs_sharpe, 'logic_flipped': needs_flip,
             'raw_predictions': test_predictions, 'trained_model_object': model, 'feature_scaler': data_normalizer}
+
+    def _train_lstm(self, features_train: pd.DataFrame, target_train: pd.Series, features_test: pd.DataFrame,
+                    target_test: pd.Series, price_returns: np.ndarray) -> dict:
+
+        lstm_model = LSTM(self.seed)
+        return lstm_model.train(features_train, target_train, features_test, target_test, price_returns)
 
     # Save models for all horizons with the best performing model type
     def _save_winning_strategy_assets(self, ticker: str, interval: str, full_results: dict,
@@ -283,53 +433,70 @@ class TrainingManager:
         save_folder = os.path.join(MODEL_DIR, f"{ticker}_{interval}")
         if not os.path.exists(save_folder): os.makedirs(save_folder)
 
-        model_bundle = {
-            "classifiers": {},
-            "horizons": [1, 2, 4, 5, 8, 21]
-        }
-
-        best_model_type = max(full_results, key=lambda result: result['absolute_sharpe'])['model_type']
-        period = "h" if "h" in interval else "d"
-
         scaler = StandardScaler().fit(features_data)
         scaled_features = scaler.transform(features_data)
 
-        meta = {
-            "results": [{k: (v.item() if hasattr(v, 'item') else v) for k, v in d.items() if k not in {"raw_predictions", "trained_model_object", "feature_scaler"} }
-                    for d in full_results],
-            "training date": datetime.now().strftime("%Y-%m-%d"),
-            "best model": best_model_type
-        }
+        meta_full = {}
+        for h, horizon_results in full_results.items():
+            best_model_type = max(horizon_results, key=lambda x: x["absolute_sharpe"])["model_type"]
+            meta_full[str(h)] = {
+                "best model": best_model_type,
+                "training date": datetime.now().strftime("%Y-%m-%d"),
+                "full results": [
+                    {k: (v.item() if hasattr(v, 'item') else v)
+                     for k, v in result.items()
+                     if k not in {"raw_predictions", "trained_model_object", "feature_scaler"}}
+                    for result in full_results[h]
+                ],
+            }
 
-        for h in model_bundle["horizons"]:
-            target_col = f'target_cls_{h}{period}'
-
+            target_col = f'target_cls_{h}{interval[1]}'
             valid_idx = targets_dataframe[target_col].notna()
             x_final = scaled_features[valid_idx.values]
             y_final = targets_dataframe[target_col][valid_idx]
 
+            model_file = f"model_{h}{interval[1]}"
+
             # Train Classifier
-            if best_model_type == 'LGBM':
+            if best_model_type == 'LSTM':
+                lstm_base = LSTM(self.seed)
+                x_3d, y_3d = lstm_base.create_3d_sequences(x_final, y_final)
+
+                model = lstm_base.get_lstm_competitor(input_dim=x_3d.shape[2])
+                model.fit(x_3d, y_3d)
+
+                save_file(model.module_.state_dict(), os.path.join(save_folder, f"{model_file}.safetensors"))
+                meta_full[str(h)]["file_format"] = ".safetensors"
+
+            elif best_model_type == 'LGBM':
                 up_days = y_final.sum()
                 down_days = len(y_final) - up_days
                 spw = down_days / up_days if up_days > 0 else 1.0
 
-                model = LGBMClassifier(n_estimators=100, learning_rate=0.05, random_state=self.seed,
-                    scale_pos_weight=spw, verbose=-1, device="gpu", gpu_platform_id=0, gpu_device_id=0)
-            elif best_model_type == 'Lasso':
-                model = LogisticRegression(penalty='l1', solver='liblinear', random_state=self.seed, class_weight='balanced')
-            else:  # SVC
-                model = SVC(
-                    kernel='rbf', C=1.0, random_state=self.seed, class_weight='balanced', probability=True)
+                model = LGBMClassifier(
+                    n_estimators=100, learning_rate=0.05, random_state=self.seed,
+                    scale_pos_weight=spw, verbose=-1, device="gpu", gpu_platform_id=0, gpu_device_id=0
+                )
+                model.fit(x_final, y_final)
 
-                # Fit the finalized model
-            model.fit(x_final, y_final)
-            model_bundle["classifiers"][h] = model
+                model.booster_.save_model(os.path.join(save_folder, f"{model_file}.txt"))
+                meta_full[str(h)]["file_format"] = ".txt"
 
-        with open(f'{save_folder}/metadata.json', 'w') as f: json.dump(meta, f)
-        joblib.dump(model_bundle, f"{save_folder}/models.pkl")
-        joblib.dump(scaler, f"{save_folder}/scaler.pkl")
-        joblib.dump(list(features_data.columns), f"{save_folder}/features.pkl")
+            else:
+                if best_model_type == 'Lasso':
+                    model = LogisticRegression(penalty='l1', solver='liblinear', random_state=self.seed, class_weight='balanced')
+                else:  # SVC
+                    model = SVC(kernel='rbf', C=1.0, random_state=self.seed, class_weight='balanced', probability=True)
+
+                model.fit(x_final, y_final)
+
+                joblib.dump(model, os.path.join(save_folder, f"{model_file}.joblib"))
+                meta_full[str(h)]["file_format"] = ".joblib"
+
+        with open(os.path.join(save_folder, 'metadata.json'), 'w') as f:
+            json.dump(meta_full, f, indent=4)
+        joblib.dump(scaler, os.path.join(save_folder, "scaler.joblib"))
+        joblib.dump(list(features_data.columns), os.path.join(save_folder, "features.joblib"))
 
     # Run all helper functions and consolidate the best model
     def run_training_pipeline(self, ticker: str, interval: str) -> bool:
@@ -357,24 +524,32 @@ class TrainingManager:
         # Create input features and answers
         period = "h" if 'h' in interval else "d"
         features_train, features_test = train_data[train_columns], test_data[train_columns]
-        targets_train, targets_test = train_data[f'target_cls_1{period}'], test_data[f'target_cls_1{period}']
-        actual_returns_test = test_data['return'].values
 
-        # Model competition
-        results = [
-            self._train_lightgbm(features_train, targets_train, features_test, targets_test, actual_returns_test),
-            self._train_lasso_regression(features_train, targets_train, features_test, targets_test, actual_returns_test),
-            self._train_support_vector(features_train, targets_train, features_test, targets_test, actual_returns_test)
-        ]
+        results = {}
 
-        for r in results:
-            # A model is 'Stable' if the test accuracy is close to the walk-forward accuracy
-            stability = abs(r['accuracy'] - r['walk_forward_accuracy'])
-            r["stability"] = stability
+        for h in ([1,2,4,8] if period == "h" else [1,2,5,21]):
+
+            targets_train, targets_test = train_data[f'target_cls_{h}{period}'], test_data[f'target_cls_{h}{period}']
+            actual_returns_test = test_data['return'].values
+
+            print(f"Training for horizon {h}...")
+            # Model competition
+            horizon_results = [
+                self._train_lightgbm(features_train, targets_train, features_test, targets_test, actual_returns_test),
+                self._train_lasso_regression(features_train, targets_train, features_test, targets_test, actual_returns_test),
+                self._train_support_vector(features_train, targets_train, features_test, targets_test, actual_returns_test),
+                self._train_lstm(features_train, targets_train, features_test, targets_test, actual_returns_test)
+            ]
+
+            for r in horizon_results:
+                # A model is 'Stable' if the test accuracy is close to the walk-forward accuracy
+                stability = abs(r['accuracy'] - r['walk_forward_accuracy'])
+                r["stability"] = stability
+
+            results[h] = horizon_results
 
         # Save winning model data
         self._save_winning_strategy_assets(ticker, interval, results, features_train, train_data)
-
         return True
 
 ############################################################################
@@ -449,7 +624,8 @@ def prediction_saved(ticker: str, interval: str, date) -> bool:
 def run_prediction_pipeline(ticker: str, interval: str) -> dict:
     # Add in technical indicators
     processed_df, assets = prepare_prediction_data(ticker, interval)
-    if any(v is None for v in [processed_df, assets]): return {}
+    if any(v is None for v in [processed_df, assets]):
+        return {}
 
     last_trade_date = processed_df.index[-1]
 
@@ -499,15 +675,23 @@ def prepare_prediction_data(ticker: str, interval: str) -> tuple:
             df = pd.concat([df, new_row])
 
     # Trains a model if needed
-    if not all(os.path.exists(os.path.join(model_path, f)) for f in ["models.pkl", "features.pkl", "scaler.pkl", "metadata.json"]):
-        # print(f"Empty or missing trained models found for {ticker}. Training...")
-        if not TrainingManager().run_training_pipeline(ticker, interval): return None, None
+    existing_stems = {p.stem for p in Path(model_path).iterdir()} if os.path.exists(model_path) else set()
+    horizons = [1, 2, 4, 8] if 'h' in interval else [1, 2, 5, 21]
+    required_files = {f"model_{h}{interval[1]}" for h in horizons} | {"features", "scaler", "metadata"}
+    if not required_files.issubset(existing_stems):
+        print("Empty or missing model files. Training...")
+        if not TrainingManager().run_training_pipeline(ticker, interval):
+            print("Failed to train models.")
+            return None, None
 
     # Load assets
     processed_df = TrainingManager().calculate_technical_indicators(df.copy(), ticker, interval, training=False)
-    if processed_df.empty: return None, None
-    scaler = joblib.load(f"{model_path}/scaler.pkl")
-    features = joblib.load(f"{model_path}/features.pkl")
+    if processed_df.empty:
+        print("Failed to calculate technical indicators.")
+        return None, None
+
+    scaler = joblib.load(f"{model_path}/scaler.joblib")
+    features = joblib.load(f"{model_path}/features.joblib")
 
     return processed_df, (scaler, features, model_path)
 
@@ -554,11 +738,12 @@ def get_market_dates(latest_date, horizons, period):
 
 # Predict the price movement
 def generate_forecasts(processed_df: pd.DataFrame, assets: tuple, tech_info: tuple) -> dict:
-    scaler, features, model_path = assets
+    scaler, features, model_folder = assets
     horizons, period, last_trade_date, current_price =  tech_info
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    model_bundle = joblib.load(f"{model_path}/models.pkl")
-    scaled_row = scaler.transform(processed_df[features].iloc[-1:])
+    with open(os.path.join(model_folder, 'metadata.json'), 'r') as f:
+        meta = json.load(f)
 
     current_volatility_atr = float(processed_df['ATR'].iloc[-1])
     forecast_results = {}
@@ -569,11 +754,39 @@ def generate_forecasts(processed_df: pd.DataFrame, assets: tuple, tech_info: tup
     # Calculate forecastSs
     for step, actual_time in horizons.items():
         if target_dates[step] is None: continue
+
         # Load the specific model for this timeframe
-        directional_classifier = model_bundle["classifiers"][step]
+        ext = meta[str(step)]['file_format']
+        model_path = os.path.join(model_folder, f"model_{step}{period}{ext}")
+
+        if ext == ".safetensors":
+            recent_data = processed_df[features].tail(14)
+            scaled_seq = scaler.transform(recent_data)
+
+            # Convert to 3D: (1, 14, num_features)
+            x_3d = np.expand_dims(scaled_seq, axis=0).astype(np.float32)
+
+            brain = LSTMBrain(len(features))
+            state_dict = load_file(model_path)
+            brain.load_state_dict(state_dict)
+            brain.to(device)
+            brain.eval()
+
+            with torch.no_grad():
+                input_tensor = torch.from_numpy(x_3d)
+                up_probability = float(brain(input_tensor).item())
+
+        elif ext == ".txt":
+            scaled_row = scaler.transform(processed_df[features].iloc[-1:])
+            booster = LGBMBooster(model_file=model_path)
+            up_probability = float(booster.predict(scaled_row)[0])
+
+        else: # Joblib (Lasso or SVC)
+            scaled_row = scaler.transform(processed_df[features].iloc[-1:])
+            model = joblib.load(model_path)
+            up_probability = float(model.predict_proba(scaled_row)[0][1])
 
         # Calculate whether it will go up or down
-        up_probability = float(directional_classifier.predict_proba(scaled_row)[0][1])
         adjusted_probability = up_probability if up_probability > 0.5 else 1 - up_probability
         direction = "UP ▲" if up_probability > 0.5 else "DOWN ▼"
 
@@ -583,11 +796,10 @@ def generate_forecasts(processed_df: pd.DataFrame, assets: tuple, tech_info: tup
         expected_move_magnitude = current_volatility_atr * np.sqrt(step)
 
         predicted_price = current_price + (direction_multiplier * expected_move_magnitude * confidence_strength)
-
         capped_width = min(expected_move_magnitude * (1.0 + confidence_strength), current_price * 0.15)
 
 #         print(f"""
-# NVDA: {actual_time}{period}
+# Time: {actual_time}{period}
 # Latest Date: {last_trade_date}
 # Target Date: {target_dates[step]}
 # Current price: {current_price}

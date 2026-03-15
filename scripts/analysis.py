@@ -12,8 +12,8 @@ from joblib import Parallel, delayed
 import time_machine
 
 from scripts.config import CACHE_DIR, DATA_DIR
-from predictor import run_prediction_pipeline
-from data_management import UpdateWorker, load_data, NYSE_CAL
+from scripts.predictor import run_prediction_pipeline
+from scripts.data_management import UpdateWorker, load_data, NYSE_CAL
 
 logging.getLogger('yfinance').setLevel(logging.CRITICAL)
 
@@ -33,6 +33,7 @@ def run_batch_predictions():
     print("--- Updating Global Sentiment ---")
     updater = UpdateWorker()
     updater.sentiment_update()
+    updater.update_spy()
 
     print(f"\n--- Batch Updating Prices for {len(ticker_map)} tickers ---")
     ticker_list = [f for f in ticker_map.values()]
