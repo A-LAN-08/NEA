@@ -12,7 +12,7 @@ from joblib import Parallel, delayed
 import time_machine
 
 from scripts.config import CACHE_DIR, DATA_DIR
-from scripts.predictor import run_prediction_pipeline
+from scripts.predictor import run_prediction_pipeline, Settings
 from scripts.data_management import UpdateWorker, load_data, NYSE_CAL
 
 logging.getLogger('yfinance').setLevel(logging.CRITICAL)
@@ -36,7 +36,7 @@ def run_batch_predictions():
     updater.update_spy()
 
     print(f"\n--- Batch Updating Prices for {len(ticker_map)} tickers ---")
-    ticker_list = [f for f in ticker_map.values()]
+    ticker_list = sorted([f for f in ticker_map.values()])
 
     for interval in ["1h", "1d"]:
         first_ticker = ticker_list[0]
@@ -124,6 +124,7 @@ if __name__ == '__main__':
     # with time_machine.travel(target_time):
         # run()
 
+    Settings.VERBOSE = 1 # Change to 0 if you don't want logging clogging up console
     run_batch_predictions()
 
 

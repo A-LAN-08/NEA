@@ -13,21 +13,22 @@ import numpy as np
 import pandas as pd
 import pandas_market_calendars as mcal
 import talib
-from scipy.stats import linregress
 from pykalman import KalmanFilter
 import yfinance as yf
 from lightgbm import LGBMClassifier
 from lightgbm import Booster as LGBMBooster
 from PyQt6.QtCore import QThread, pyqtSignal
-from sklearn.linear_model import LinearRegression, LogisticRegression
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 import torch
 import torch.nn as nn
-from skorch import NeuralNetClassifier
+from skorch import NeuralNetClassifier, dataset
+from skorch.callbacks import EarlyStopping, EpochScoring
 from safetensors.torch import save_file, load_file
+
 
 # Set environment variables and filters
 os.environ["LOKY_MAX_CPU_COUNT"] = "1"
@@ -37,6 +38,9 @@ NYSE_CAL = mcal.get_calendar('NYSE')
 # Custom imports
 from scripts.data_management import load_data
 from scripts.config import LEDGER_DIR, MODEL_DIR, DATA_DIR
+
+class Settings:
+    VERBOSE = 0 # Set whether to display logging or not
 
 ############################################################################
 
@@ -133,10 +137,23 @@ class LSTM:
             module__input_dim=input_dim,
             max_epochs=100,
             lr=0.001, # learning rate
+            train_split=dataset.ValidSplit(0.2, stratified=False),
             iterator_train__shuffle=False,
             device='cuda' if torch.cuda.is_available() else 'cpu',
-            verbose=0,
-            criterion=nn.BCELoss
+            verbose=VERBOSE,
+            criterion=nn.BCELoss,
+            callbacks=[
+                ('early_stopping', EarlyStopping(
+                    monitor='valid_loss',
+                    patience=5,  # Stop if no improvement after 5 epochs
+                    lower_is_better=True
+                )),
+                ('val_acc', EpochScoring(
+                    scoring='accuracy',
+                    name='valid_acc',
+                    lower_is_better=False
+                ))
+            ]
         )
 
     @staticmethod
@@ -146,7 +163,6 @@ class LSTM:
             x.append(data[i: i + window_size])
             y.append(targets[i + window_size])
         return np.array(x).astype(np.float32), np.array(y).astype(np.float32)
-
 
 # Class to control and train models
 class TrainingManager:
