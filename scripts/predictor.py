@@ -131,9 +131,9 @@ class LSTM:
         return NeuralNetClassifier(
             LSTMBrain,
             module__input_dim=input_dim,
-            max_epochs=20,
-            lr=0.001,
-            iterator_train__shuffle=False,  # Important for time-series!
+            max_epochs=100,
+            lr=0.001, # learning rate
+            iterator_train__shuffle=False,
             device='cuda' if torch.cuda.is_available() else 'cpu',
             verbose=0,
             criterion=nn.BCELoss
@@ -323,7 +323,7 @@ class TrainingManager:
         scale_pos_weight = (len(target_train) - target_train.sum()) / target_train.sum()
 
         # Initialize the LightGBM model
-        model = LGBMClassifier(n_estimators=100, learning_rate=0.05, random_state=self.seed,
+        model = LGBMClassifier(n_estimators=500, learning_rate=0.05, random_state=self.seed,
                                scale_pos_weight=scale_pos_weight, verbose=-1,
                                device="gpu", gpu_platform_id=0, gpu_device_id=0)
 
