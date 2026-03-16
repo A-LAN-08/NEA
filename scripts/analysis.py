@@ -119,12 +119,12 @@ def run_batch_predictions():
 ############################################################################
 
 if __name__ == '__main__':
-    target_time = datetime(2026, 3, 13, 12, 0, 0, tzinfo=timezone.utc)
+    # target_time = datetime(2026, 3, 13, 12, 0, 0, tzinfo=timezone.utc)
 
-    with time_machine.travel(target_time):
+    # with time_machine.travel(target_time):
         # run()
 
-        run_batch_predictions()
+    run_batch_predictions()
 
 
 
