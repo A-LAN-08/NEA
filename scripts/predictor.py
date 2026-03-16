@@ -140,7 +140,7 @@ class LSTM:
             train_split=dataset.ValidSplit(0.2, stratified=False),
             iterator_train__shuffle=False,
             device='cuda' if torch.cuda.is_available() else 'cpu',
-            verbose=VERBOSE,
+            verbose=Settings.VERBOSE,
             criterion=nn.BCELoss,
             callbacks=[
                 ('early_stopping', EarlyStopping(
