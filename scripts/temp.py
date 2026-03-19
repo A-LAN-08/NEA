@@ -515,9 +515,9 @@ def get_spy():
 
 if __name__ in "__main__":
 
-    # print("Starting...")
-    # r = run_prediction_pipeline("A", "1h")
-    # print(r)
+    print("Starting...")
+    r = run_prediction_pipeline("A", "1h")
+    print(r)
 
 
     pass

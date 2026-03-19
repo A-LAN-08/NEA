@@ -167,7 +167,7 @@ class LSTM:
 # Class to control and train models
 class TrainingManager:
     def __init__(self):
-        self.seed = 42
+        self.seed = 69
         self.sharpe_threshold = 0.50 # Min sharpe value for model to be useful
         self.__test_size = 0.2 # How much of data used to test vs train
 
@@ -284,7 +284,7 @@ class TrainingManager:
         df['Efficiency_Ratio'] = price_diff / volatility  # 1.0 = Strong Trend, 0.0 = Choppy/Noisy
 
         # Market context
-        spy_data = pd.read_parquet(os.path.join(DATA_DIR, f'SPY_data_{interval}.parquet'))
+        spy_data = pd.read_parquet(os.path.join(DATA_DIR, f'SPY_{interval}.parquet'))
         spy_data.index.name = "Date"
         spy_data.index = pd.to_datetime(spy_data.index, utc=True).tz_localize(None)
         spy_data = spy_data[~spy_data.index.duplicated(keep='first')]
@@ -641,6 +641,7 @@ def run_prediction_pipeline(ticker: str, interval: str) -> dict:
     # Add in technical indicators
     processed_df, assets = prepare_prediction_data(ticker, interval)
     if any(v is None for v in [processed_df, assets]):
+        print("No data or assets.")
         return {}
 
     last_trade_date = processed_df.index[-1]
