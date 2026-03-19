@@ -567,7 +567,7 @@ def initial_download():
     ticker_list = sorted([f for f in ticker_map.values()])
 
     for interval in ["1h", "1d"]:
-        for ticker in tqdm(ticker_list, desc=f"Processing {interval}"):
+        for ticker in tqdm(ticker_list, desc=f"Downloading for {interval}"):
             try:
                 ticker_df = yf.download(ticker, interval=interval, period="max", auto_adjust=False, progress=False)
                 if ticker_df.empty: continue
