@@ -548,7 +548,7 @@ class TrainingManager:
             targets_train, targets_test = train_data[f'target_cls_{h}{period}'], test_data[f'target_cls_{h}{period}']
             actual_returns_test = test_data['return'].values
 
-            print(f"Training for horizon {h}...")
+            # print(f"Training for horizon {h}...")
             # Model competition
             horizon_results = [
                 self._train_lightgbm(features_train, targets_train, features_test, targets_test, actual_returns_test),
@@ -695,15 +695,15 @@ def prepare_prediction_data(ticker: str, interval: str) -> tuple:
     horizons = [1, 2, 4, 8] if 'h' in interval else [1, 2, 5, 21]
     required_files = {f"model_{h}{interval[1]}" for h in horizons} | {"features", "scaler", "metadata"}
     if not required_files.issubset(existing_stems):
-        print("Empty or missing model files. Training...")
+        # print("Empty or missing model files. Training...")
         if not TrainingManager().run_training_pipeline(ticker, interval):
-            print("Failed to train models.")
+            # print("Failed to train models.")
             return None, None
 
     # Load assets
     processed_df = TrainingManager().calculate_technical_indicators(df.copy(), ticker, interval, training=False)
     if processed_df.empty:
-        print("Failed to calculate technical indicators.")
+        # print("Failed to calculate technical indicators.")
         return None, None
 
     scaler = joblib.load(f"{model_path}/scaler.joblib")
