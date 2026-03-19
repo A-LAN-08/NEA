@@ -15,7 +15,7 @@ def process_single_ticker(ticker):
     for interval in ["1h", "1d"]:
         try:
             run_prediction_pipeline(ticker, interval)
-        except Exception as e:
+        except Exception:
             pass
 
 def run_batch_predictions(sent, spy, cache, models, free_cores):
@@ -53,8 +53,6 @@ if __name__ == '__main__':
         # run_batch_predictions()
 
     Settings.VERBOSE = 1 # Change to 0 if you don't want logging clogging up console
-
-    # initial_download() # Run this if no stock cache downloaded yet
 
     run_batch_predictions(
         sent=True, spy=True, cache=True, # Whether to update: News sentiment, SPY data (market sentiment indicator), stock cache

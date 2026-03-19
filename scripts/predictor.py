@@ -29,7 +29,6 @@ from skorch import NeuralNetClassifier, dataset
 from skorch.callbacks import EarlyStopping, EpochScoring
 from safetensors.torch import save_file, load_file
 
-
 # Set environment variables and filters
 os.environ["LOKY_MAX_CPU_COUNT"] = "1"
 warnings.filterwarnings("ignore")

@@ -567,13 +567,13 @@ def initial_download():
     ticker_list = sorted([f for f in ticker_map.values()])
 
     for interval in ["1h", "1d"]:
-        full_df = yf.download(ticker_list, period="max", interval=interval, group_by='ticker', auto_adjust=False)
-
         for ticker in tqdm(ticker_list, desc=f"Processing {interval}"):
             try:
-                ticker_df = full_df[ticker].dropna(how='all')
+                ticker_df = yf.download(ticker, interval=interval, period="max", auto_adjust=False, progress=False)
                 if ticker_df.empty: continue
 
+                if isinstance(ticker_df.columns, pd.MultiIndex):
+                    ticker_df.columns = ticker_df.columns.get_level_values(0)
 
                 now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
                 schedule = NYSE_CAL.schedule(start_date=now_utc_naive, end_date=now_utc_naive)
@@ -589,7 +589,7 @@ def initial_download():
 
                 ticker_df.index = pd.to_datetime(ticker_df.index, utc=True).tz_localize(None)
                 ticker_df.index.name = "Date"
-                ticker_df.index = pd.to_datetime(ticker_df.index, utc=True).tz_localize(None).strftime('%Y-%m-%d %H:%M:%S')
+                ticker_df.index = ticker_df.index.strftime('%Y-%m-%d %H:%M:%S')
 
                 cache_path = os.path.join(CACHE_DIR, f"{ticker}_{interval}.csv")
                 ticker_df.to_csv(cache_path)
@@ -615,5 +615,7 @@ if __name__ in "__main__":
     # print("Starting...")
     # r = run_prediction_pipeline("A", "1h")
     # print(r)
+
+    initial_download()
 
     pass
