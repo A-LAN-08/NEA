@@ -226,6 +226,7 @@ class UpdateWorker(QThread):
                 # Append and save
                 updated_df = pd.concat([df, new_data])
                 updated_df = updated_df[~updated_df.index.duplicated(keep='last')]
+                updated_df = updated_df.loc[:, ~updated_df.columns.duplicated()]
                 updated_df.to_csv(cache_file)
 
     @staticmethod
@@ -237,11 +238,12 @@ class UpdateWorker(QThread):
             interval_seconds = seconds_map[unit] * value
 
             # Load existing cached stock data from file
-            cache_file = os.path.join(DATA_DIR, f"SPY_data_{interval}.csv")
+            cache_file = os.path.join(DATA_DIR, f"SPY_{interval}.parquet")
 
             df = pd.read_parquet(cache_file)
             df.index.name = "Date"
             df.index = pd.to_datetime(df.index, utc=True).tz_localize(None)
+            df = df.loc[:, ~df.columns.duplicated()]
 
             # Find time period for which data needs to be downloaded
             time_diff = datetime.now(timezone.utc).replace(tzinfo=None) - df.index[-1]
@@ -252,6 +254,9 @@ class UpdateWorker(QThread):
                 # Fetch for the period that has passed
                 new_data = yf.download("SPY", period=period, interval=interval, progress=False, auto_adjust=False)
                 if new_data.empty: return
+
+                if isinstance(new_data.columns, pd.MultiIndex):
+                    new_data.columns = new_data.columns.get_level_values(0)
 
                 new_data.index = pd.to_datetime(new_data.index, utc=True).tz_localize(None)
                 new_data.index.name = "Date"
@@ -270,6 +275,7 @@ class UpdateWorker(QThread):
                 # Append and save
                 updated_df = pd.concat([df, new_data])
                 updated_df = updated_df[~updated_df.index.duplicated(keep='last')]
+                updated_df = updated_df.loc[:, ~updated_df.columns.duplicated()]
                 updated_df.to_parquet(cache_file)
 
 

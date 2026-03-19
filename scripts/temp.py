@@ -501,38 +501,23 @@ def timefy():
 
             df.to_csv(os.path.join(CACHE_DIR, ticker))
 
+def get_spy():
+    import pandas as pd
+    import os
+    from config import DATA_DIR
+
+    for interval in ["1h", "1d"]:
+        df = pd.read_csv(os.path.join(DATA_DIR, f"SPY_{interval}.csv"))
+
+        df.to_parquet(os.path.join(DATA_DIR, f"SPY_{interval}.parquet"))
+
 ##############################################################################################################
 
 if __name__ in "__main__":
-    # print("\n")
-    # full_df = pd.read_parquet(os.path.join(SENT_DIR, "master_sentiment.parquet"))
-    #
-    # tickers = list(full_df['ticker'].unique())
-    #
-    # with open(os.path.join(ROOT_DIR, "ticker_history_list.json"), 'w') as f:
-    #     json.dump(tickers, f)
 
-    # revert_to_raw()
-
-    # calculate_average_confidence()
-
-    # find_missing_files()
-    # remove_incomplete()
-
-    # import folder_trees
-    # folder_trees.generate_tree(ROOT_DIR)
-
-    # cache_refactor()
-
-    # timefy()
-
-    # print(load_prediction("A", "1d", datetime.datetime(2026, 3, 12)))
-
-    # run_prediction_pipline("A", "1d")
-
-    print("Starting...")
-    r = run_prediction_pipeline("A", "1h")
-    print(r)
+    # print("Starting...")
+    # r = run_prediction_pipeline("A", "1h")
+    # print(r)
 
 
     pass

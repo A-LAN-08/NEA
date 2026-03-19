@@ -6,7 +6,7 @@ import pandas as pd
 import yfinance as yf
 from yfinance import shared
 from datetime import datetime, timezone
-import tqdm
+from tqdm import tqdm
 import multiprocessing
 from joblib import Parallel, delayed
 import time_machine
@@ -26,7 +26,7 @@ def process_single_ticker(ticker):
         except Exception as e:
             pass
 
-def run_batch_predictions():
+def run_batch_predictions(free_cores):
     with open(os.path.join(DATA_DIR, "ticker_map.json"), "r") as f:
         ticker_map = json.load(f)
 
@@ -83,7 +83,7 @@ def run_batch_predictions():
             is_market_currently_open = mkt_open <= now_utc_naive <= mkt_close
 
         print()
-        for ticker in tqdm.tqdm(ticker_list, desc=f"Processing {interval}"):
+        for ticker in tqdm(ticker_list, desc=f"Processing {interval}"):
             try:
                 new_rows = batch_data[ticker].dropna(how='all')
 
@@ -101,6 +101,7 @@ def run_batch_predictions():
 
                 updated_df = pd.concat([existing_df, new_rows])
                 updated_df = updated_df[~updated_df.index.duplicated(keep='last')]
+                updated_df = updated_df.loc[:, ~updated_df.columns.duplicated()]
                 updated_df.to_csv(cache_path)
 
             except Exception as e:
@@ -109,23 +110,63 @@ def run_batch_predictions():
 
     print("\n--- Running Predictions ---")
 
-    num_cores = max(1, multiprocessing.cpu_count() - 2)
+    num_cores = max(1, multiprocessing.cpu_count() - free_cores)
     print(f"-> Using {num_cores} CPU cores...")
 
     Parallel(n_jobs=num_cores)(
-        delayed(process_single_ticker)(ticker) for ticker in tqdm.tqdm(ticker_list, desc="Predicting")
+        delayed(process_single_ticker)(ticker) for ticker in tqdm(ticker_list, desc="Predicting")
     )
+
+def initial_download():
+    with open(os.path.join(DATA_DIR, "ticker_map.json"), "r") as f:
+        ticker_map = json.load(f)
+
+    ticker_list = sorted([f for f in ticker_map.values()])
+
+    for interval in ["1h", "1d"]:
+        full_df = yf.download(ticker_list, period="max", interval=interval, group_by='ticker', auto_adjust=False)
+
+        for ticker in tqdm(ticker_list, desc=f"Processing {interval}"):
+            try:
+                ticker_df = full_df[ticker].dropna(how='all')
+                if ticker_df.empty: continue
+
+
+                now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+                schedule = NYSE_CAL.schedule(start_date=now_utc_naive, end_date=now_utc_naive)
+                is_market_currently_open = False
+
+                if not schedule.empty:
+                    mkt_open = schedule.iloc[0]['market_open'].replace(tzinfo=None)
+                    mkt_close = schedule.iloc[0]['market_close'].replace(tzinfo=None)
+                    is_market_currently_open = mkt_open <= now_utc_naive <= mkt_close
+
+                if is_market_currently_open:
+                    ticker_df = ticker_df.iloc[:-1]
+
+                ticker_df.index = pd.to_datetime(ticker_df.index, utc=True).tz_localize(None)
+                ticker_df.index.name = "Date"
+                ticker_df.index = pd.to_datetime(ticker_df.index, utc=True).tz_localize(None).strftime('%Y-%m-%d %H:%M:%S')
+
+                cache_path = os.path.join(CACHE_DIR, f"{ticker}_{interval}.csv")
+                ticker_df.to_csv(cache_path)
+
+            except Exception as e:
+                tqdm.write(f"Error updating {ticker}: {e}")
+                continue
 
 ############################################################################
 
 if __name__ == '__main__':
     # target_time = datetime(2026, 3, 13, 12, 0, 0, tzinfo=timezone.utc)
-
     # with time_machine.travel(target_time):
         # run()
 
     Settings.VERBOSE = 1 # Change to 0 if you don't want logging clogging up console
-    run_batch_predictions()
+
+    # initial_download() # Run this if no stock cache downloaded yet
+
+    run_batch_predictions(free_cores=2) # How many CPU cores do you want left free
 
 
 
