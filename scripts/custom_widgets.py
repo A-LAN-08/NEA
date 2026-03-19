@@ -11,19 +11,18 @@ from PyQt6.QtGui import QColor, QMouseEvent, QPainter, QPainterPath, QPixmap, QP
 from PyQt6.QtWidgets import (QHBoxLayout, QLabel, QLayout, QPushButton, QSizePolicy, QSlider, QVBoxLayout, QWidget)
 
 # Custom imports
-from scripts.config import ICON_DIR
+from scripts.config import IMG_DIR
 
 # Type hinting imports
 if TYPE_CHECKING:
     from scripts.default_gui import MainWindow
-    from scripts.profile_gui import ProfileWindow
 
 ############################################################################
 
 # Class for custom button attributes and behaviour
 class CustomButton(QPushButton):
     def __init__(
-            self, name: str, group: str, btn_type: str, parent: MainWindow | ProfileWindow,
+            self, name: str, group: str, btn_type: str, parent: MainWindow,
             img: str = None, desc: str = None,
             width: int = None, height: int = None, *args, **kwargs
     ):
@@ -42,13 +41,6 @@ class CustomButton(QPushButton):
             # Graph
             "add_stock_btn": lambda: self.parent.add_to_graph(),
             "remove_stock_btn": lambda: self.parent.remove_from_graph(),
-            # PofileWindow
-            "logout_btn": lambda: self.parent.logout(),
-            "change_profile_btn": lambda: self.parent.change_profile(),
-            "delete_profile_btn": lambda: self.parent.delete_profile(),
-            "import_data_btn": lambda: self.parent.import_profile(),
-            "export_data_btn": lambda: self.parent.export_profile(),
-            "search_confirm_btn": lambda: self.parent.add_stock(),
         }
 
         # Setup parameters and basic styling
@@ -116,7 +108,7 @@ class CustomButton(QPushButton):
 ############################################################################
 
 # Helper function to create a risk slider with all styling and return layout
-def create_slider_layout(parent: MainWindow | ProfileWindow) -> QVBoxLayout:
+def create_slider_layout(parent: MainWindow) -> QVBoxLayout:
     risk_layout = QVBoxLayout(); risk_layout.setSpacing(0)
 
     # Create slider and label for value selected
@@ -158,15 +150,12 @@ class ClickableLabel(QLabel):
 
 # Helper function to create a circular label for profile icon
 def create_circle_label(
-        parent: MainWindow | ProfileWindow, clickable: bool = True,
+        parent: MainWindow, clickable: bool = True,
         diameter: int = 100, desc: str = None, border: bool = True
 ) -> QLabel:
     # Get icon file and create a pixmap from it
-    username = parent.get_profile_data().get("username", "person_icon")
-    base = os.path.join(ICON_DIR, username).replace("\\", "/")
-    default = os.path.join(ICON_DIR, "person_icon.jpg").replace("\\", "/")
-
-    pixmap = QPixmap(next((base + ext for ext in [".png", ".jpg", ".jpeg"] if os.path.exists(base + ext)), default))
+    default = os.path.join(IMG_DIR, "person_icon.jpg").replace("\\", "/")
+    pixmap = QPixmap(default)
     if pixmap.isNull(): pixmap = QPixmap(default)
 
     # Scale pixmap and setup painter

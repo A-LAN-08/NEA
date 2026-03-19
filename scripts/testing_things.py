@@ -1,38 +1,17 @@
 
-# import os
-#
-# os.environ["PYQTGRAPH_QT_LIB"] = "None"  # Stops libraries from hunting for Qt
-# os.environ["PYTHONINSPECT"] = ""         # Prevents the "freeze" on exit
-#
-# import json
-# import time
-# import re
-# import shutil
-#
-# import pandas as pd
-# import numpy as np
-# import datetime
-# from google.cloud import bigquery
-# from pandas.tseries.holiday import USFederalHolidayCalendar
-# from pandas.tseries.offsets import CustomBusinessDay
-# import matplotlib.pyplot as plt
-# from tqdm import tqdm
 # from edgar import Company, set_identity
-#
-# from config import ROOT_DIR, CACHE_DIR, MODEL_DIR, LEDGER_DIR, DATA_DIR
-from predictor import load_prediction, run_prediction_pipeline
-#
-# class EndError(Exception):
-#     pass
-
-# set_identity("Alex adlanecki@outlook.com")
+# set_identity("Name email@gmail.com")
 
 ##############################################################################################################
 
-def temp():
-    t = os.listdir(CACHE_DIR)
+def remove_all_ticker_info(tickers):
+    import os
+    import shutil
+    from tqdm import tqdm
 
-    for f in tqdm(t):
+    from config import MODEL_DIR, LEDGER_DIR, CACHE_DIR
+
+    for f in tqdm(tickers):
         try:
             parts = f.split("_")
             ticker = parts[0].upper()
@@ -58,7 +37,9 @@ def temp():
 ##############################################################################################################
 """ sentiments """
 # Download sentiment data
-def main():
+def get_full_sent():
+    from google.cloud import bigquery
+
     sent_client = bigquery.Client(
         project="market-predictor-throwaway",
         client_options={"quota_project_id": "market-predictor-throwaway"}
@@ -236,8 +217,6 @@ def revert_to_raw():
     df_raw.to_parquet(new_path, index=False)
     print(f"Reverted to raw data. Columns remaining: {df_raw.columns.tolist()}")
 
-################################################
-""" sentiments """
 # Tests to ensure data integrity
 def run_final_validation():
     input_file = os.path.join(ROOT_DIR, "data", "sentiment_features.parquet")
@@ -501,6 +480,124 @@ def timefy():
 
             df.to_csv(os.path.join(CACHE_DIR, ticker))
 
+##############################################################################################################
+""" downloading data things """
+def data_update():
+    import os
+    import pandas as pd
+    import yfinance as yf
+    from yfinance import shared
+    from datetime import datetime, timezone
+    from tqdm import tqdm
+
+    from config import CACHE_DIR
+    from data_management import NYSE_CAL, load_data
+
+    with os.scandir(CACHE_DIR) as entries:
+        files = [e for e in entries if e.is_file()]
+        ticker_list = sorted(list({f.name.split("_")[0] for f in files}))
+
+        # Find the entry with the oldest modification time
+        oldest_file = min(files, key=lambda e: e.stat().st_mtime)
+        start_date = os.path.getmtime(oldest_file.path) - pd.Timedelta(days=1)
+
+    for interval in ["1h", "1d"]:
+        # Download data
+        shared._ERRORS = {}
+        batch_data = yf.download(ticker_list, start=start_date, interval=interval,
+                                 group_by='ticker', auto_adjust=False, progress=True)
+
+        # If any failed, retry the download for just those
+        if shared._ERRORS:
+            print("Retrying failed tickers...")
+            failed_tickers = list(shared._ERRORS.keys())
+            shared._ERRORS = {}
+            extra_data = yf.download(failed_tickers, start=start_date, interval=interval,
+                                     group_by='ticker', auto_adjust=False, progress=True)
+
+            if not extra_data.empty:
+                batch_data = pd.concat([batch_data, extra_data], axis=1)
+
+        # Find whether the market is open
+        now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+        schedule = NYSE_CAL.schedule(start_date=now_utc_naive, end_date=now_utc_naive)
+        is_market_currently_open = False
+
+        if not schedule.empty:
+            mkt_open = schedule.iloc[0]['market_open'].replace(tzinfo=None)
+            mkt_close = schedule.iloc[0]['market_close'].replace(tzinfo=None)
+            is_market_currently_open = mkt_open <= now_utc_naive <= mkt_close
+
+        for ticker in tqdm(ticker_list, desc=f"Processing {interval}"):
+            try:
+                new_rows = batch_data[ticker].dropna(how='all')
+                if new_rows.empty: continue
+
+                new_rows.index = pd.to_datetime(new_rows.index, utc=True).tz_localize(None)
+                if is_market_currently_open:
+                    new_rows = new_rows.iloc[:-1]
+
+                new_rows.index.name = "Date"
+                new_rows.index = pd.to_datetime(new_rows.index, utc=True).tz_localize(None).strftime('%Y-%m-%d %H:%M:%S')
+
+                cache_path = os.path.join(CACHE_DIR, f"{ticker}_{interval}.csv")
+                existing_df = load_data(ticker, interval)
+
+                updated_df = pd.concat([existing_df, new_rows])
+                updated_df = updated_df[~updated_df.index.duplicated(keep='last')]
+                updated_df = updated_df.loc[:, ~updated_df.columns.duplicated()]
+                updated_df.to_csv(cache_path)
+
+            except Exception: continue
+
+def initial_download():
+    import os
+    import pandas as pd
+    import yfinance as yf
+    from datetime import datetime, timezone
+    from tqdm import tqdm
+    import json
+
+    from config import CACHE_DIR, DATA_DIR
+    from data_management import NYSE_CAL
+
+    with open(os.path.join(DATA_DIR, "ticker_map.json"), "r") as f:
+        ticker_map = json.load(f)
+
+    ticker_list = sorted([f for f in ticker_map.values()])
+
+    for interval in ["1h", "1d"]:
+        full_df = yf.download(ticker_list, period="max", interval=interval, group_by='ticker', auto_adjust=False)
+
+        for ticker in tqdm(ticker_list, desc=f"Processing {interval}"):
+            try:
+                ticker_df = full_df[ticker].dropna(how='all')
+                if ticker_df.empty: continue
+
+
+                now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+                schedule = NYSE_CAL.schedule(start_date=now_utc_naive, end_date=now_utc_naive)
+                is_market_currently_open = False
+
+                if not schedule.empty:
+                    mkt_open = schedule.iloc[0]['market_open'].replace(tzinfo=None)
+                    mkt_close = schedule.iloc[0]['market_close'].replace(tzinfo=None)
+                    is_market_currently_open = mkt_open <= now_utc_naive <= mkt_close
+
+                if is_market_currently_open:
+                    ticker_df = ticker_df.iloc[:-1]
+
+                ticker_df.index = pd.to_datetime(ticker_df.index, utc=True).tz_localize(None)
+                ticker_df.index.name = "Date"
+                ticker_df.index = pd.to_datetime(ticker_df.index, utc=True).tz_localize(None).strftime('%Y-%m-%d %H:%M:%S')
+
+                cache_path = os.path.join(CACHE_DIR, f"{ticker}_{interval}.csv")
+                ticker_df.to_csv(cache_path)
+
+            except Exception as e:
+                tqdm.write(f"Error updating {ticker}: {e}")
+                continue
+
 def get_spy():
     import pandas as pd
     import os
@@ -515,9 +612,8 @@ def get_spy():
 
 if __name__ in "__main__":
 
-    print("Starting...")
-    r = run_prediction_pipeline("A", "1h")
-    print(r)
-
+    # print("Starting...")
+    # r = run_prediction_pipeline("A", "1h")
+    # print(r)
 
     pass

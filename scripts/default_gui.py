@@ -4,14 +4,12 @@ import numpy as np
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
-    QComboBox, QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
+    QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QMainWindow, QMessageBox, QProgressBar, QSlider, QVBoxLayout, QWidget
 )
 
 # Custom imports
 from scripts.data_management import UpdateManager, abs_file, validate_ticker
-from scripts.profile_gui import ProfileWindow
-from scripts.profile_management import DataManager, Profile
 from scripts.predictor import TrainingWorker
 from scripts.custom_widgets import CustomButton, add_to_layout, create_circle_label, create_slider_layout
 from scripts.graph import StockGraph
@@ -20,7 +18,6 @@ from scripts.graph import StockGraph
 
 class MainWindow(QMainWindow):
     # Classes
-    logged_profile: Profile | None
     graph: StockGraph
     updater: UpdateManager
     thread: TrainingWorker
@@ -48,12 +45,6 @@ class MainWindow(QMainWindow):
         self.setGeometry(100, 100, 1500, 900)
         self.setStyleSheet("QWidget {background-color: white; color: black;}")
         self.btns = {"top_btns": [], "pd_type_btns": [], "confirmation_btns": []}
-
-        # Initialize the profile logic
-        self.data_manager = DataManager()
-        self.logged_in = False
-        self.logged_profile = None
-        self.status_label = QLabel("Not logged in")
 
         # Set up the main layout and save to dict for reframing later
         central = QWidget(); self.setCentralWidget(central)
@@ -133,10 +124,9 @@ class MainWindow(QMainWindow):
         profile_frame_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         # Create profile image icon & logging label and add to profile frame
-        desc = "Click to log in" if not self.logged_in else "Click to switch to profile overview window"
         add_to_layout(
             profile_frame_layout, alignment=Qt.AlignmentFlag.AlignCenter,
-            items=[create_circle_label(self, diameter=120, desc=desc, border=self.logged_in), self.status_label]
+            items=[create_circle_label(self, diameter=120)]
         )
 
         # Prediction settings frame styling (pd_set = prediction_settings)
@@ -207,11 +197,6 @@ class MainWindow(QMainWindow):
         self.graph.rebuild_self()
         self.graph_container.addWidget(self.graph.ax.vb.win)
 
-    # Helper function to get a dict of logged in profile
-    def get_profile_data(self) -> dict:
-        if self.logged_in: return self.logged_profile.get_full_data()
-        else: return {}
-
     # Helper function to add a stock to the graph
     def add_to_graph(self):
         # Get ticker input
@@ -238,66 +223,6 @@ class MainWindow(QMainWindow):
     # Helper function to switch between different time intervals on the graph
     def switch_graph_res(self):
         self.graph.switch_graph_resolution(self.res_dropdown.currentText())
-
-    # Helper function on profile label click
-    def label_click(self) -> None:
-        # If logged in, open new profile window
-        if self.logged_in:
-            self.hide()
-            profile_window = ProfileWindow(self, self.logged_profile)
-            profile_window.exec()
-        # If not logged in, display login prompt
-        else: self.login_window()
-
-    # Helper function to show login prompt if not logged in
-    def login_window(self) -> None:
-        # Get username and password input
-        username, ok = QInputDialog.getText(self, "Login", "Enter Username:")
-        if not ok: return
-
-        password, ok = QInputDialog.getText(self, "Login", f"Enter Password:", QLineEdit.EchoMode.Password)
-        if not ok: return
-
-        # Ensure username & password meet length requirements and don't contain illegal characters
-        if (not all(6 <= len(word) <= 64 for word in [username, password]) or
-            not all(char for char in username if char.isalnum() or char in ["-", "_"])):
-            QMessageBox.critical(self, "Error", "Username, password is too short or contains an illegal character.")
-            return
-
-        result = self.data_manager.get_profile(username, password)
-        # Set status to logged in upon success, and rebuild right frame to update with user information
-        if isinstance(result, Profile):
-            self.logged_in = True; self.logged_profile = result
-            self.rebuild_frame("right")
-            self.status_label.setText(f"Status: Logged In as {username}")
-            QMessageBox.information(self, "Success", f"Welcome, {username}!")
-
-        # If validation in DataManager class finds no profile, prompt user to create a new profile
-        elif result == "Non-existent profile":
-            reply = QMessageBox.question(
-                self, "Profile Not Found", "Profile does not exist. Would you like to create a new one?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-            )
-
-            # If they wish to proceed, create a new profile with details previously entered
-            if reply == QMessageBox.StandardButton.Yes:
-                result = self.data_manager.create_profile(username, password)
-                if result == "Profile created":
-                    QMessageBox.information(self, "Success", "New profile created! Please log in again.")
-                else: QMessageBox.critical(self, "Creation Error", result)
-
-                self.status_label.setText("Status: New login created")
-                return
-
-            self.status_label.setText("Status: Login Failed.")
-
-        # If wrong password was entered, return and display to user error
-        elif result == "Incorrect password":
-            self.status_label.setText("Status: Incorrect Password.")
-            QMessageBox.critical(self, "Login Failed", "Incorrect password.")
-
-        # Catch any other errors and display them
-        else: QMessageBox.critical(self, "Error", f"An error occurred: {result}")
 
     # Helper function to start prediction
     def predict(self) -> None:

@@ -1,7 +1,6 @@
 
 # Standard library imports
 import os
-import random
 from datetime import datetime, timezone, timedelta
 import json
 import re
@@ -12,6 +11,7 @@ import pandas_market_calendars as mcal
 from pandas.tseries.holiday import USFederalHolidayCalendar
 from pandas.tseries.offsets import CustomBusinessDay
 import yfinance as yf
+from yfinance import shared
 from PyQt6.QtCore import QObject, QThread, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QLabel, QProgressBar
 from tqdm import tqdm
@@ -144,90 +144,64 @@ class UpdateWorker(QThread):
 
     # Helper function to iterate through cache data to update
     def data_updater(self):
-        total = {f.split("_")[0] for f in os.listdir(CACHE_DIR)}
-        processed = set()
+        with os.scandir(CACHE_DIR) as entries:
+            files = [e for e in entries if e.is_file()]
+            ticker_list = sorted(list({f.name.split("_")[0] for f in files}))
 
-        while len(processed) < len(total):
-            # Check for interrupt and update those first
-            if self.priority_tickers:
-                ticker = self.priority_tickers.pop(0)
-                if ticker in processed: continue
+            # Find the entry with the oldest modification time
+            oldest_file = min(files, key=lambda e: e.stat().st_mtime)
+            start_date = os.path.getmtime(oldest_file.path) - pd.Timedelta(days=1)
 
-                self.progress_msg.emit(f"Updating: {ticker}")
-                self.progress_val.emit(int((len(processed) / len(total)) * 100))
-
-                self.update_data(ticker)
-
-                processed.add(ticker)
-                self.msleep(int(random.uniform(0.05, 0.2)*1000))
-                continue
-
-            # Else continue with regular update loop
-            for ticker in tqdm(total, desc="Updating data", unit="file"):
-                if ticker in processed: continue
-
-                self.progress_msg.emit(f"Updating: {ticker}")
-                self.progress_val.emit(int((len(processed) / len(total)) * 100))
-
-                self.update_data(ticker)
-
-                processed.add(ticker)
-
-                # Check for priority again after every file
-                self.msleep(int(random.uniform(0.05, 0.2)*1000))
-                if self.priority_tickers: break
-
-        self.progress_msg.emit("Completed data update")
-
-    # Helper function to update data for a stock
-    @staticmethod
-    def update_data(ticker):
         for interval in ["1h", "1d"]:
-            # Get the needed interval format for yfinance from filename
-            seconds_map = {"m": 60, "h": 3600, "d": 86400}
-            unit, value = ''.join(filter(str.isalpha, interval)), int(''.join(filter(str.isdigit, interval)))
-            interval_seconds = seconds_map[unit] * value
+            # Download data
+            shared._ERRORS = {}
+            batch_data = yf.download(ticker_list, start=start_date, interval=interval,
+                                     group_by='ticker', auto_adjust=False, progress=True)
 
-            # Load existing cached stock data from file
-            cache_file = os.path.join(CACHE_DIR, f"{ticker}_{interval}.csv")
-            if not os.path.exists(cache_file): continue
+            # If any failed, retry the download for just those
+            if shared._ERRORS:
+                print("Retrying failed tickers...")
+                failed_tickers = list(shared._ERRORS.keys())
+                shared._ERRORS = {}
+                extra_data = yf.download(failed_tickers, start=start_date, interval=interval,
+                                         group_by='ticker', auto_adjust=False, progress=True)
 
-            df = load_data(ticker, interval)
+                if not extra_data.empty:
+                    batch_data = pd.concat([batch_data, extra_data], axis=1)
 
-            # Find time period for which data needs to be downloaded
-            time_diff = datetime.now(timezone.utc).replace(tzinfo=None) - df.index[-1]
-            period = f"{int(min((time_diff.total_seconds() // 86400) + 5, 700))}d"
+            # Find whether the market is open
+            now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+            schedule = NYSE_CAL.schedule(start_date=now_utc_naive, end_date=now_utc_naive)
+            is_market_currently_open = False
 
-            needs_update = (time_diff.total_seconds() >= interval_seconds)
-            if needs_update:
-                # Fetch for the period that has passed
-                new_data = yf.download(ticker, period=period, interval=interval, progress=False, auto_adjust=False)
-                if new_data.empty: return
+            if not schedule.empty:
+                mkt_open = schedule.iloc[0]['market_open'].replace(tzinfo=None)
+                mkt_close = schedule.iloc[0]['market_close'].replace(tzinfo=None)
+                is_market_currently_open = mkt_open <= now_utc_naive <= mkt_close
 
-                # Flatten columns if Multiindex and strip timezones to avoid alignment errors
-                if isinstance(new_data.columns, pd.MultiIndex):
-                    cols: pd.MultiIndex = new_data.columns
-                    new_data.columns = cols.get_level_values(0)
+            for ticker in tqdm(ticker_list, desc=f"Processing {interval}"):
+                try:
+                    new_rows = batch_data[ticker].dropna(how='all')
+                    if new_rows.empty: continue
 
-                new_data.index = pd.to_datetime(new_data.index, utc=True).tz_localize(None)
-                new_data.index.name = "Date"
+                    new_rows.index = pd.to_datetime(new_rows.index, utc=True).tz_localize(None)
+                    if is_market_currently_open:
+                        new_rows = new_rows.iloc[:-1]
 
-                now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
-                schedule = NYSE_CAL.schedule(start_date=now_utc_naive, end_date=now_utc_naive)
+                    new_rows.index.name = "Date"
+                    new_rows.index = pd.to_datetime(new_rows.index, utc=True).tz_localize(None).strftime(
+                        '%Y-%m-%d %H:%M:%S')
 
-                if not schedule.empty:
-                    mkt_open = schedule.iloc[0]['market_open'].replace(tzinfo=None)
-                    mkt_close = schedule.iloc[0]['market_close'].replace(tzinfo=None)
+                    cache_path = os.path.join(CACHE_DIR, f"{ticker}_{interval}.csv")
+                    existing_df = load_data(ticker, interval)
 
-                    # If we are currently between open and close, the last downloaded row is "Live"
-                    if mkt_open <= now_utc_naive <= mkt_close:
-                        new_data = new_data.iloc[:-1]
+                    updated_df = pd.concat([existing_df, new_rows])
+                    updated_df = updated_df[~updated_df.index.duplicated(keep='last')]
+                    updated_df = updated_df.loc[:, ~updated_df.columns.duplicated()]
+                    updated_df.to_csv(cache_path)
 
-                # Append and save
-                updated_df = pd.concat([df, new_data])
-                updated_df = updated_df[~updated_df.index.duplicated(keep='last')]
-                updated_df = updated_df.loc[:, ~updated_df.columns.duplicated()]
-                updated_df.to_csv(cache_file)
+                except Exception:
+                    continue
 
     @staticmethod
     def update_spy():
@@ -277,7 +251,6 @@ class UpdateWorker(QThread):
                 updated_df = updated_df[~updated_df.index.duplicated(keep='last')]
                 updated_df = updated_df.loc[:, ~updated_df.columns.duplicated()]
                 updated_df.to_parquet(cache_file)
-
 
     @staticmethod
     def sentiment_update():
@@ -440,16 +413,19 @@ class UpdateManager(QObject):
     utc_open: pd.Timestamp
     utc_close: pd.Timestamp
 
-    def __init__(self, progress_label: QLabel, progress_bar: QProgressBar):
+    def __init__(self, progress_label: QLabel = None, progress_bar: QProgressBar = None):
         super().__init__()
-        # Save parent widgets that display progress
-        self.plabel = progress_label
-        self.pbar = progress_bar
         self.worker = UpdateWorker()
 
-        # Connect signals
-        self.worker.progress_msg.connect(self.plabel.setText)
-        self.worker.progress_val.connect(self.pbar.setValue)
+        self.labels = all(label is not None for label in [progress_label, progress_bar])
+        if self.labels:
+            # Save parent widgets that display progress
+            self.plabel = progress_label
+            self.pbar = progress_bar
+
+            # Connect signals
+            self.worker.progress_msg.connect(self.plabel.setText)
+            self.worker.progress_val.connect(self.pbar.setValue)
 
         # Start timer
         self.timer = QTimer()
@@ -458,12 +434,14 @@ class UpdateManager(QObject):
         # Run once on startup
         self.start_updating()
 
-        # Calculate how long to wait till next update then run every 15 mins
+        # Calculate how long to wait till next update then run every hour
         now = datetime.now(timezone.utc)
-        minutes_to_wait = 15 - (now.minute % 15)
-        initial_delay_ms = (minutes_to_wait * 60 - now.second) * 1000
+        target = now.replace(minute=31, second=0, microsecond=0)
+        if now >= target:
+            target += timedelta(hours=1)
 
-        QTimer.singleShot(int(initial_delay_ms), self.update_loop)
+        initial_delay_ms = int((target - now).total_seconds() * 1000)
+        QTimer.singleShot(initial_delay_ms, self.update_loop)
 
     # Helper function loop to run updating script
     def update_loop(self):
@@ -472,8 +450,9 @@ class UpdateManager(QObject):
 
         # Run loop
         self.start_updating()
-        self.plabel.setText("Up to date")
-        self.timer.start(900000) # 15 minutes
+        if self.labels: self.plabel.setText("Up to date")
+
+        self.timer.start(3600000) # 1 hour
 
     # Helper function to start the update worker
     def start_updating(self):
