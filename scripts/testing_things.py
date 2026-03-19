@@ -602,11 +602,38 @@ def get_spy():
     import pandas as pd
     import os
     from config import DATA_DIR
+    import yfinance as yf
+    from datetime import datetime, timezone
+    from data_management import NYSE_CAL
 
     for interval in ["1h", "1d"]:
-        df = pd.read_csv(os.path.join(DATA_DIR, f"SPY_{interval}.csv"))
+        # df = pd.read_csv(os.path.join(DATA_DIR, f"SPY_{interval}.csv"))
 
-        df.to_parquet(os.path.join(DATA_DIR, f"SPY_{interval}.parquet"))
+        data = yf.download("SPY", interval=interval, period="max", auto_adjust=False, progress=False)
+
+        # Flattens columns if MultiIndex
+        if isinstance(data.columns, pd.MultiIndex):
+            cols: pd.MultiIndex = data.columns
+            data.columns = cols.get_level_values(0)
+
+        data.index = pd.to_datetime(data.index, utc=True).tz_localize(None)
+        data.index.name = "Date"
+
+        now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+        schedule = NYSE_CAL.schedule(start_date=now_utc_naive, end_date=now_utc_naive)
+
+        if not schedule.empty:
+            mkt_open = schedule.iloc[0]['market_open'].replace(tzinfo=None)
+            mkt_close = schedule.iloc[0]['market_close'].replace(tzinfo=None)
+
+            # If we are currently between open and close, the last downloaded row is "Live"
+            if mkt_open <= now_utc_naive <= mkt_close:
+                data = data.iloc[:-1]
+
+        data.to_parquet(os.path.join(DATA_DIR, f"SPY_{interval}.parquet"))
+
+##############################################################################################################
+
 
 ##############################################################################################################
 

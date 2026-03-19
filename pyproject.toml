@@ -15,6 +15,7 @@ dependencies = [
     "lightgbm>=4.6.0",
     "matplotlib>=3.10.8",
     "numpy>=2.4.3",
+    "optuna>=4.8.0",
     "pandas>=3.0.1",
     "pandas-market-calendars>=5.3.1.2",
     "pykalman>=0.11.2",
