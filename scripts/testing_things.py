@@ -632,6 +632,38 @@ def get_spy():
 
         data.to_parquet(os.path.join(DATA_DIR, f"SPY_{interval}.parquet"))
 
+def get_vxx():
+    import pandas as pd
+    import os
+    from config import DATA_DIR
+    import yfinance as yf
+    from datetime import datetime, timezone
+    from data_management import NYSE_CAL
+
+    for interval in ["1h", "1d"]:
+        data = yf.download("VXX", interval=interval, period="max", auto_adjust=False, progress=False)
+
+        # Flattens columns if MultiIndex
+        if isinstance(data.columns, pd.MultiIndex):
+            cols: pd.MultiIndex = data.columns
+            data.columns = cols.get_level_values(0)
+
+        data.index = pd.to_datetime(data.index, utc=True).tz_localize(None)
+        data.index.name = "Date"
+
+        now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+        schedule = NYSE_CAL.schedule(start_date=now_utc_naive, end_date=now_utc_naive)
+
+        if not schedule.empty:
+            mkt_open = schedule.iloc[0]['market_open'].replace(tzinfo=None)
+            mkt_close = schedule.iloc[0]['market_close'].replace(tzinfo=None)
+
+            # If we are currently between open and close, the last downloaded row is "Live"
+            if mkt_open <= now_utc_naive <= mkt_close:
+                data = data.iloc[:-1]
+
+        data.to_parquet(os.path.join(DATA_DIR, f"VXX_{interval}.parquet"))
+
 ##############################################################################################################
 
 
@@ -639,10 +671,11 @@ def get_spy():
 
 if __name__ in "__main__":
 
-    # print("Starting...")
-    # r = run_prediction_pipeline("A", "1h")
-    # print(r)
+    from predictor import run_prediction_pipeline
+    print("Starting...")
+    r = run_prediction_pipeline("VXX", "1h")
+    print(r)
 
-    initial_download()
+    # initial_download()
 
     pass

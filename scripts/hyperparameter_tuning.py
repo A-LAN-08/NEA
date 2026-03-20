@@ -12,7 +12,7 @@ import talib
 from pykalman import KalmanFilter
 from lightgbm import LGBMClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, matthews_corrcoef, make_scorer
 from sklearn.model_selection import TimeSeriesSplit, cross_val_score
 import optuna
 from sklearn.preprocessing import StandardScaler
@@ -72,6 +72,7 @@ class LSTM:
 
         tscv = TimeSeriesSplit(n_splits=2)
         optuna.logging.set_verbosity(optuna.logging.WARNING)
+        mcc_scorer = make_scorer(matthews_corrcoef)
 
         def objective(trial):
             # Lowering max LR slightly to prevent divergence
@@ -101,7 +102,9 @@ class LSTM:
             }
 
             model = self.get_lstm_competitor(input_dim=x_train_3d.shape[2], tuned_params=params)
-            scores = cross_val_score(model, x_train_3d, y_train_3d, cv=tscv, scoring='accuracy', n_jobs=1)
+
+            # Use MCC to score the trials instead of accuracy
+            scores = cross_val_score(model, x_train_3d, y_train_3d, cv=tscv, scoring=mcc_scorer, n_jobs=1)
             return scores.mean()
 
         study = optuna.create_study(direction="maximize")
@@ -121,16 +124,21 @@ class LSTM:
         best_model.fit(x_train_3d, y_train_3d)
 
         test_predictions = best_model.predict(x_test_3d)
+
+        # Ensure we align target test for evaluation after the 14-day window slice
+        aligned_target_test = target_test.iloc[14:]
         accuracy, sharpe, abs_sharpe, needs_flip = TrainingManager.evaluate_performance(
-            target_test.iloc[14:], test_predictions, price_returns[14:]
+            aligned_target_test, test_predictions, price_returns[14:]
         )
+        mcc_score = matthews_corrcoef(aligned_target_test, test_predictions)
 
         best_params['optimizer'] = optimizer_name
 
         return {
             'model_type': 'LSTM',
+            'mcc': mcc_score,
             'accuracy': accuracy,
-            'walk_forward_accuracy': study.best_value,
+            'walk_forward_mcc': study.best_value,
             'sharpe_ratio': sharpe,
             'best_params': best_params
         }
@@ -334,6 +342,7 @@ class TrainingManager:
 
         tscv = TimeSeriesSplit(n_splits=3)
         optuna.logging.set_verbosity(optuna.logging.WARNING)
+        mcc_scorer = make_scorer(matthews_corrcoef)
 
         def objective(trial):
             params = {
@@ -360,8 +369,9 @@ class TrainingManager:
                 params['reg_lambda'] = 0.0
 
             model = LGBMClassifier(**params)
-            scores = cross_val_score(model, features_train_normalized, target_train, cv=tscv, scoring='accuracy',
-                                     n_jobs=1)
+
+            # Use MCC to score the trials instead of accuracy
+            scores = cross_val_score(model, features_train_normalized, target_train, cv=tscv, scoring=mcc_scorer, n_jobs=1)
             return scores.mean()
 
         study = optuna.create_study(direction="maximize")
@@ -390,12 +400,14 @@ class TrainingManager:
 
         accuracy, sharpe, abs_sharpe, needs_flip = self.evaluate_performance(target_test, test_predictions,
                                                                              price_returns)
+        mcc_score = matthews_corrcoef(target_test, test_predictions)
+
         return {
             'model_type': 'LGBM',
+            'mcc': mcc_score,
             'accuracy': accuracy,
-            'walk_forward_accuracy': study.best_value,
+            'walk_forward_mcc': study.best_value,
             'sharpe_ratio': sharpe,
-            # 'trained_model_object': best_model,
             'best_params': best_params
         }
 
@@ -413,6 +425,7 @@ class TrainingManager:
 
         tscv = TimeSeriesSplit(n_splits=3)
         optuna.logging.set_verbosity(optuna.logging.WARNING)
+        mcc_scorer = make_scorer(matthews_corrcoef)
 
         def objective(trial):
             penalty = trial.suggest_categorical('penalty', ['l1', 'l2', 'elasticnet'])
@@ -429,8 +442,9 @@ class TrainingManager:
                 params['l1_ratio'] = trial.suggest_float('l1_ratio', 0.1, 0.9)
 
             model = LogisticRegression(**params)
-            scores = cross_val_score(model, features_train_normalized, target_train, cv=tscv, scoring='accuracy',
-                                     n_jobs=-1)
+
+            # Use MCC to score the trials instead of accuracy
+            scores = cross_val_score(model, features_train_normalized, target_train, cv=tscv, scoring=mcc_scorer, n_jobs=-1)
             return scores.mean()
 
         study = optuna.create_study(direction="maximize")
@@ -453,12 +467,14 @@ class TrainingManager:
 
         accuracy, sharpe, abs_sharpe, needs_flip = self.evaluate_performance(target_test, test_predictions,
                                                                              price_returns)
+        mcc_score = matthews_corrcoef(target_test, test_predictions)
+
         return {
             'model_type': 'Lasso',
+            'mcc': mcc_score,
             'accuracy': accuracy,
-            'walk_forward_accuracy': study.best_value,
+            'walk_forward_mcc': study.best_value,
             'sharpe_ratio': sharpe,
-            # 'trained_model_object': best_model,
             'best_params': best_params
         }
 
@@ -476,6 +492,7 @@ class TrainingManager:
 
         tscv = TimeSeriesSplit(n_splits=3)
         optuna.logging.set_verbosity(optuna.logging.WARNING)
+        mcc_scorer = make_scorer(matthews_corrcoef)
 
         def objective(trial):
             kernel = trial.suggest_categorical('kernel', ['rbf', 'poly'])
@@ -494,8 +511,9 @@ class TrainingManager:
                 params['gamma'] = gamma_type
 
             model = SVC(**params)
-            scores = cross_val_score(model, features_train_normalized, target_train, cv=tscv, scoring='accuracy',
-                                     n_jobs=-1)
+
+            # Use MCC to score the trials instead of accuracy
+            scores = cross_val_score(model, features_train_normalized, target_train, cv=tscv, scoring=mcc_scorer, n_jobs=-1)
             return scores.mean()
 
         study = optuna.create_study(direction="maximize")
@@ -518,17 +536,17 @@ class TrainingManager:
 
         test_predictions = best_model.predict(features_test_normalized)
 
-        accuracy, sharpe, abs_sharpe, needs_flip = self.evaluate_performance(target_test, test_predictions,
-                                                                             price_returns)
+        accuracy, sharpe, abs_sharpe, needs_flip = self.evaluate_performance(target_test, test_predictions, price_returns)
+        mcc_score = matthews_corrcoef(target_test, test_predictions)
 
         clean_best_params = {'C': best_params['C'], 'kernel': best_params['kernel'], 'gamma': gamma_val}
 
         return {
             'model_type': 'SVC',
+            'mcc': mcc_score,
             'accuracy': accuracy,
-            'walk_forward_accuracy': study.best_value,
+            'walk_forward_mcc': study.best_value,
             'sharpe_ratio': sharpe,
-            # 'trained_model_object': best_model,
             'best_params': clean_best_params
         }
 
@@ -540,7 +558,7 @@ class TrainingManager:
 
     # Run all helper functions and consolidate the best model
     def run_training_pipeline(self) -> bool:
-        interval = "1d"
+        interval = "1h"
 
         # Remove any corrupt model paths (i.e. not all necessary files exist validated before call)
         data = pd.read_parquet(os.path.join(DATA_DIR, f"SPY_{interval}.parquet"))
@@ -567,9 +585,19 @@ class TrainingManager:
         for h in ([1,2,4,8] if period == "h" else [1,2,5,21]):
             print(f"Training for period {h}...")
 
-            train_data_adjusted = train_data.iloc[:-h]
-            targets_train, targets_test = train_data_adjusted[f'target_cls_{h}{period}'], test_data[f'target_cls_{h}{period}']
+            # Alpha Target = (Future Return > Recent Median Return)
+            future_ret_train = (train_data['Adj Close'].shift(-h) / train_data['Adj Close']) - 1
+            future_ret_test = (test_data['Adj Close'].shift(-h) / test_data['Adj Close']) - 1
 
+            # Median return of the last month (21 days) - calculated per-set to match indices
+            median_train = train_data['return'].rolling(window=21).median().fillna(0)
+            median_test = test_data['return'].rolling(window=21).median().fillna(0)
+
+            # Create the Alpha target (1 if outperforming its own trend, 0 otherwise)
+            targets_train = (future_ret_train > median_train).astype(int).iloc[:-h]
+            targets_test = (future_ret_test > median_test).astype(int)
+
+            # Adjust features and actual returns
             features_train_adj = features_train.iloc[:-h]
             actual_returns_test = test_data['return'].values
 
@@ -586,7 +614,7 @@ class TrainingManager:
             results[h] = [a,b,c,d]
 
         # Save winning model data
-        with open("../data/results.json", "w") as f:
+        with open("results.json", "w") as f:
             json.dump(results, f, indent=4)
         return True
 

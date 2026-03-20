@@ -2,109 +2,117 @@
     "1d": [
         {
             "model_type": "LGBM",
-            "accuracy": 0.5543278084714549,
-            "walk_forward_accuracy": 0.5489352989352989,
-            "sharpe_ratio": 0.6788119067829497,
+            "mcc": 0.10257237011580729,
+            "accuracy": 0.5524861878453039,
+            "walk_forward_mcc": 0.13155839011636075,
+            "sharpe_ratio": -1.7366633355755767,
             "best_params": {
-                "n_estimators": 197,
-                "learning_rate": 0.0010371057976517044,
+                "n_estimators": 106,
+                "learning_rate": 0.006663389515125204,
                 "max_depth": 3,
-                "num_leaves": 63,
-                "subsample": 0.766610832069918,
-                "colsample_bytree": 0.8758928283222354,
+                "num_leaves": 35,
+                "subsample": 0.7476108857467731,
+                "colsample_bytree": 0.7340450598089187,
                 "reg_alpha": 0.0,
-                "reg_lambda": 0.0
+                "reg_lambda": 0.000777668203474899
             }
         },
         {
             "model_type": "Lasso",
-            "accuracy": 0.5402087170042971,
-            "walk_forward_accuracy": 0.5470925470925471,
-            "sharpe_ratio": 0.22142898542054518,
+            "mcc": 0.10282954830773153,
+            "accuracy": 0.5506445672191529,
+            "walk_forward_mcc": 0.14241709630402857,
+            "sharpe_ratio": -1.395967531155253,
             "best_params": {
                 "penalty": "l1",
-                "C": 1.1925878465375679
+                "C": 0.15843500388051676
             }
         },
         {
             "model_type": "SVC",
-            "accuracy": 0.5113566605279313,
-            "walk_forward_accuracy": 0.5466830466830467,
-            "sharpe_ratio": 0.013608060449482979,
+            "mcc": 0.05642395747761329,
+            "accuracy": 0.516267648864334,
+            "walk_forward_mcc": 0.11504079486145202,
+            "sharpe_ratio": -0.08261170799629611,
             "best_params": {
-                "C": 0.1217730953017178,
-                "kernel": "poly",
-                "gamma": 0.03861557296552546
+                "C": 0.12074191868448536,
+                "kernel": "rbf",
+                "gamma": "auto"
             }
         },
         {
             "model_type": "LSTM",
-            "accuracy": 0.5343653250773994,
-            "walk_forward_accuracy": 0.5401662049861495,
-            "sharpe_ratio": 0.7276707600385124,
+            "mcc": 0.07836661365392647,
+            "accuracy": 0.5411764705882353,
+            "walk_forward_mcc": 0.11736043154579179,
+            "sharpe_ratio": 0.34481907398805767,
             "best_params": {
-                "lr": 0.00012939922312979707,
+                "lr": 0.00010328243287351669,
                 "module__hidden_dim": 32,
-                "optimizer__weight_decay": 7.017238364024974e-05,
-                "module__dropout": 0.49239572237800566,
-                "max_epochs": 39,
+                "optimizer__weight_decay": 0.0006631303579497822,
+                "module__dropout": 0.2166061108634813,
+                "max_epochs": 25,
                 "batch_size": 64,
-                "module__layers": 1,
-                "optimizer": "AdamW"
+                "module__layers": 2,
+                "optimizer": "Adam"
             }
         }
     ],
     "2d": [
         {
             "model_type": "LGBM",
-            "accuracy": 0.5917740945365255,
-            "walk_forward_accuracy": 0.5525507068223724,
-            "sharpe_ratio": 0.7874997162198203,
+            "mcc": 0.09952330418742548,
+            "accuracy": 0.5500306936771026,
+            "walk_forward_mcc": 0.07257051731002001,
+            "sharpe_ratio": -1.350045973862899,
             "best_params": {
-                "n_estimators": 51,
-                "learning_rate": 0.004984965428811709,
-                "max_depth": -1,
-                "num_leaves": 15,
-                "subsample": 0.7929029669041978,
-                "colsample_bytree": 0.7666716099580823,
+                "n_estimators": 120,
+                "learning_rate": 0.0070175036696746105,
+                "max_depth": 7,
+                "num_leaves": 20,
+                "subsample": 0.884453587158702,
+                "colsample_bytree": 0.7534777694687084,
                 "reg_alpha": 0.0,
                 "reg_lambda": 0.0
             }
         },
         {
             "model_type": "Lasso",
-            "accuracy": 0.5887047268262738,
-            "walk_forward_accuracy": 0.5410776480229461,
-            "sharpe_ratio": 0.6131535429638101,
+            "mcc": 0.060424677599225485,
+            "accuracy": 0.5340699815837937,
+            "walk_forward_mcc": 0.09363864210081453,
+            "sharpe_ratio": -1.3864087668291418,
             "best_params": {
-                "penalty": "l1",
-                "C": 0.02012398125929979
+                "penalty": "l2",
+                "C": 0.0013258500509538177
             }
         },
         {
             "model_type": "SVC",
-            "accuracy": 0.5174953959484346,
-            "walk_forward_accuracy": 0.5474288055726286,
-            "sharpe_ratio": 0.1565412954202133,
+            "mcc": 0.040718679146271045,
+            "accuracy": 0.5371393492940454,
+            "walk_forward_mcc": 0.08315987743037068,
+            "sharpe_ratio": 0.6748690146250862,
             "best_params": {
-                "C": 0.10539652899399252,
-                "kernel": "poly",
-                "gamma": "auto"
+                "C": 0.10906799622109209,
+                "kernel": "rbf",
+                "gamma": "scale"
             }
         },
         {
             "model_type": "LSTM",
-            "accuracy": 0.541795665634675,
-            "walk_forward_accuracy": 0.5501154734411086,
-            "sharpe_ratio": 0.649907952778453,
+            "mcc": -0.003971758866180505,
+            "accuracy": 0.5102167182662539,
+            "walk_forward_mcc": 0.05323647134517147,
+            "sharpe_ratio": 0.5564022123581596,
             "best_params": {
-                "lr": 0.0002206519820313407,
-                "module__hidden_dim": 64,
-                "optimizer__weight_decay": 0.0006003540215668968,
-                "module__dropout": 0.32033700956475597,
-                "max_epochs": 34,
+                "lr": 0.0009607707037269092,
+                "module__hidden_dim": 32,
+                "optimizer__weight_decay": 1.5183187853832133e-05,
+                "module__dropout": 0.44766909976039737,
+                "max_epochs": 27,
                 "batch_size": 32,
-                "module__layers": 1,
+                "module__layers": 2,
                 "optimizer": "Adam"
             }
         }
@@ -112,54 +120,57 @@
     "5d": [
         {
             "model_type": "LGBM",
-            "accuracy": 0.6138735420503376,
-            "walk_forward_accuracy": 0.5707846752714607,
-            "sharpe_ratio": 0.7874997162198203,
+            "mcc": 0.061915172653815874,
+            "accuracy": 0.5911602209944752,
+            "walk_forward_mcc": 0.053758681538664865,
+            "sharpe_ratio": 0.4157834793985114,
             "best_params": {
-                "n_estimators": 111,
-                "learning_rate": 0.001198901950073022,
+                "n_estimators": 69,
+                "learning_rate": 0.013324756625548587,
                 "max_depth": 3,
-                "num_leaves": 32,
-                "subsample": 0.7452659257235144,
-                "colsample_bytree": 0.8699508094953824,
-                "reg_alpha": 0.000668160635408516,
-                "reg_lambda": 0.1402141657378991
+                "num_leaves": 61,
+                "subsample": 0.8343514817298527,
+                "colsample_bytree": 0.8735640049736613,
+                "reg_alpha": 0.0,
+                "reg_lambda": 9.214266507714761
             }
         },
         {
             "model_type": "Lasso",
-            "accuracy": 0.3861264579496624,
-            "walk_forward_accuracy": 0.5707846752714607,
-            "sharpe_ratio": 0,
+            "mcc": -0.03402326023666842,
+            "accuracy": 0.5420503376304481,
+            "walk_forward_mcc": 0.04405311281911081,
+            "sharpe_ratio": 0.4735437518100216,
             "best_params": {
-                "penalty": "elasticnet",
-                "C": 0.001097082320510544,
-                "l1_ratio": 0.8907674642245281
+                "penalty": "l2",
+                "C": 0.05010611266372664
             }
         },
         {
             "model_type": "SVC",
-            "accuracy": 0.5751995089011663,
-            "walk_forward_accuracy": 0.5380045072730998,
-            "sharpe_ratio": 0.2604819831678249,
+            "mcc": 0.021554452475507156,
+            "accuracy": 0.5573971761817066,
+            "walk_forward_mcc": 0.041970930844595605,
+            "sharpe_ratio": 0.23164733555761238,
             "best_params": {
-                "C": 1.8973657285926155,
+                "C": 7.752483347864573,
                 "kernel": "rbf",
                 "gamma": "auto"
             }
         },
         {
             "model_type": "LSTM",
-            "accuracy": 0.5907120743034056,
-            "walk_forward_accuracy": 0.5411275415896488,
-            "sharpe_ratio": 1.1035488066413006,
+            "mcc": -0.07707139791700976,
+            "accuracy": 0.5281733746130031,
+            "walk_forward_mcc": 0.03826685703178471,
+            "sharpe_ratio": 0.6219993415964573,
             "best_params": {
-                "lr": 0.0008724934892717851,
-                "module__hidden_dim": 64,
-                "optimizer__weight_decay": 0.003944767192497964,
-                "module__dropout": 0.2612819644668888,
-                "max_epochs": 23,
-                "batch_size": 32,
+                "lr": 0.0002493235080398331,
+                "module__hidden_dim": 32,
+                "optimizer__weight_decay": 1.2426166851504893e-05,
+                "module__dropout": 0.2842080014707091,
+                "max_epochs": 44,
+                "batch_size": 64,
                 "module__layers": 2,
                 "optimizer": "Adam"
             }
@@ -168,53 +179,295 @@
     "21d": [
         {
             "model_type": "LGBM",
-            "accuracy": 0.5684468999386126,
-            "walk_forward_accuracy": 0.6321626617375231,
-            "sharpe_ratio": 0.3931286586438633,
+            "mcc": 0.023939010223853592,
+            "accuracy": 0.4904849600982198,
+            "walk_forward_mcc": 0.02618822273429396,
+            "sharpe_ratio": -0.030632639007103227,
             "best_params": {
-                "n_estimators": 103,
-                "learning_rate": 0.003547218463165852,
-                "max_depth": 7,
-                "num_leaves": 19,
-                "subsample": 0.8037250107504288,
-                "colsample_bytree": 0.8504492467388824,
-                "reg_alpha": 0.00027566105503684267,
+                "n_estimators": 88,
+                "learning_rate": 0.005651270025033431,
+                "max_depth": -1,
+                "num_leaves": 39,
+                "subsample": 0.7705345887604803,
+                "colsample_bytree": 0.7776890363118125,
+                "reg_alpha": 0.0,
                 "reg_lambda": 0.0
             }
         },
         {
             "model_type": "Lasso",
-            "accuracy": 0.565377532228361,
-            "walk_forward_accuracy": 0.6134729924009038,
-            "sharpe_ratio": 0.3476648287990452,
+            "mcc": 0.0625516709681565,
+            "accuracy": 0.6813996316758748,
+            "walk_forward_mcc": 0.07369612907598214,
+            "sharpe_ratio": 0.7788059084484104,
             "best_params": {
-                "penalty": "l1",
-                "C": 1.3956720424663094
+                "penalty": "elasticnet",
+                "C": 0.0028264804086535586,
+                "l1_ratio": 0.1939634344927905
             }
         },
         {
             "model_type": "SVC",
-            "accuracy": 0.6746470227133211,
-            "walk_forward_accuracy": 0.5816389402341343,
-            "sharpe_ratio": 0.7933812057289721,
+            "mcc": 0.017697356989085568,
+            "accuracy": 0.5825659914057704,
+            "walk_forward_mcc": 0.08634592806487601,
+            "sharpe_ratio": 0.12038384022058479,
             "best_params": {
-                "C": 70.24184921679789,
+                "C": 0.1450953287156772,
                 "kernel": "rbf",
-                "gamma": 0.09748669735357601
+                "gamma": "scale"
             }
         },
         {
             "model_type": "LSTM",
-            "accuracy": 0.5492260061919505,
-            "walk_forward_accuracy": 0.5951829550717924,
-            "sharpe_ratio": 0.4959383410796531,
+            "mcc": -0.0012873986972395338,
+            "accuracy": 0.4037151702786378,
+            "walk_forward_mcc": 0.09725007144948669,
+            "sharpe_ratio": 0.3043320687381153,
             "best_params": {
-                "lr": 0.000981945053078833,
+                "lr": 0.0001857169727844601,
                 "module__hidden_dim": 32,
-                "optimizer__weight_decay": 0.006759259578004678,
-                "module__dropout": 0.46250440612696264,
-                "max_epochs": 43,
+                "optimizer__weight_decay": 0.0019626456493441625,
+                "module__dropout": 0.22094945825641055,
+                "max_epochs": 42,
                 "batch_size": 32,
+                "module__layers": 1,
+                "optimizer": "AdamW"
+            }
+        }
+    ],
+    "1h": [
+        {
+            "model_type": "LGBM",
+            "mcc": 0.10604570965366422,
+            "accuracy": 0.5525114155251142,
+            "walk_forward_mcc": 0.10492020428102135,
+            "sharpe_ratio": -1.720942954294059,
+            "best_params": {
+                "n_estimators": 127,
+                "learning_rate": 0.005961830244441803,
+                "max_depth": 3,
+                "num_leaves": 26,
+                "subsample": 0.7266745936817278,
+                "colsample_bytree": 0.7986459070183801,
+                "reg_alpha": 0.011172406917670366,
+                "reg_lambda": 9.72889212019365
+            }
+        },
+        {
+            "model_type": "Lasso",
+            "mcc": 0.11977019060116269,
+            "accuracy": 0.5540334855403348,
+            "walk_forward_mcc": 0.1259498571253694,
+            "sharpe_ratio": -2.3357924721444148,
+            "best_params": {
+                "penalty": "elasticnet",
+                "C": 0.01455518794940349,
+                "l1_ratio": 0.34578544650797083
+            }
+        },
+        {
+            "model_type": "SVC",
+            "mcc": 0.1517385251268151,
+            "accuracy": 0.5707762557077626,
+            "walk_forward_mcc": 0.13008504891037967,
+            "sharpe_ratio": -1.9263695008036286,
+            "best_params": {
+                "C": 0.35656382519705915,
+                "kernel": "rbf",
+                "gamma": "scale"
+            }
+        },
+        {
+            "model_type": "LSTM",
+            "mcc": 0.10973828925559077,
+            "accuracy": 0.5567651632970451,
+            "walk_forward_mcc": 0.12751000814502683,
+            "sharpe_ratio": 0.4951925688810656,
+            "best_params": {
+                "lr": 0.00022896976225298345,
+                "module__hidden_dim": 32,
+                "optimizer__weight_decay": 0.004405383595275043,
+                "module__dropout": 0.44035490008796296,
+                "max_epochs": 26,
+                "batch_size": 64,
+                "module__layers": 1,
+                "optimizer": "AdamW"
+            }
+        }
+    ],
+    "2h": [
+        {
+            "model_type": "LGBM",
+            "mcc": -0.02572799328712804,
+            "accuracy": 0.4901065449010654,
+            "walk_forward_mcc": 0.05884537153193964,
+            "sharpe_ratio": -0.632854541109738,
+            "best_params": {
+                "n_estimators": 177,
+                "learning_rate": 0.004383372894490912,
+                "max_depth": 3,
+                "num_leaves": 22,
+                "subsample": 0.8206461780840412,
+                "colsample_bytree": 0.8996635618988682,
+                "reg_alpha": 0.01360673999738189,
+                "reg_lambda": 0.044749990736122125
+            }
+        },
+        {
+            "model_type": "Lasso",
+            "mcc": 0.05317485477855711,
+            "accuracy": 0.5312024353120244,
+            "walk_forward_mcc": 0.07125874430976357,
+            "sharpe_ratio": -0.4888506257489899,
+            "best_params": {
+                "penalty": "l2",
+                "C": 0.21648321526444303
+            }
+        },
+        {
+            "model_type": "SVC",
+            "mcc": 0.050312492035719567,
+            "accuracy": 0.5251141552511416,
+            "walk_forward_mcc": 0.0933159373553541,
+            "sharpe_ratio": -1.8834068109728352,
+            "best_params": {
+                "C": 0.1804058695311532,
+                "kernel": "rbf",
+                "gamma": "scale"
+            }
+        },
+        {
+            "model_type": "LSTM",
+            "mcc": 0.10450007705509856,
+            "accuracy": 0.5458786936236392,
+            "walk_forward_mcc": 0.055652026963512735,
+            "sharpe_ratio": 0.15213694388711135,
+            "best_params": {
+                "lr": 0.00022481118990949517,
+                "module__hidden_dim": 32,
+                "optimizer__weight_decay": 0.0003525610182720433,
+                "module__dropout": 0.4481272573141832,
+                "max_epochs": 34,
+                "batch_size": 32,
+                "module__layers": 1,
+                "optimizer": "Adam"
+            }
+        }
+    ],
+    "4h": [
+        {
+            "model_type": "LGBM",
+            "mcc": 0.01229315812094255,
+            "accuracy": 0.5053272450532724,
+            "walk_forward_mcc": 0.1032789715511372,
+            "sharpe_ratio": -0.2436452659784579,
+            "best_params": {
+                "n_estimators": 172,
+                "learning_rate": 0.0062351992822216465,
+                "max_depth": 3,
+                "num_leaves": 45,
+                "subsample": 0.8239222614748525,
+                "colsample_bytree": 0.71904608905276,
+                "reg_alpha": 0.03232039939975342,
+                "reg_lambda": 0.0004870349392758546
+            }
+        },
+        {
+            "model_type": "Lasso",
+            "mcc": 0.06878816004533364,
+            "accuracy": 0.5357686453576864,
+            "walk_forward_mcc": 0.04477794961626155,
+            "sharpe_ratio": -1.1565212804674885,
+            "best_params": {
+                "penalty": "l2",
+                "C": 0.20216475892985844
+            }
+        },
+        {
+            "model_type": "SVC",
+            "mcc": 0.11948234895746014,
+            "accuracy": 0.558599695585997,
+            "walk_forward_mcc": 0.040731403156787215,
+            "sharpe_ratio": -1.423348773208534,
+            "best_params": {
+                "C": 0.4075286429121701,
+                "kernel": "rbf",
+                "gamma": "scale"
+            }
+        },
+        {
+            "model_type": "LSTM",
+            "mcc": 0.07470324354802567,
+            "accuracy": 0.5334370139968896,
+            "walk_forward_mcc": 0.08085547607269265,
+            "sharpe_ratio": 0.18727540305225948,
+            "best_params": {
+                "lr": 0.00022279308194271847,
+                "module__hidden_dim": 64,
+                "optimizer__weight_decay": 0.001407026570985104,
+                "module__dropout": 0.42122034034016886,
+                "max_epochs": 27,
+                "batch_size": 64,
+                "module__layers": 1,
+                "optimizer": "Adam"
+            }
+        }
+    ],
+    "8h": [
+        {
+            "model_type": "LGBM",
+            "mcc": 0.22032628721899133,
+            "accuracy": 0.5966514459665144,
+            "walk_forward_mcc": 0.09112497216673554,
+            "sharpe_ratio": -0.05207222303101123,
+            "best_params": {
+                "n_estimators": 142,
+                "learning_rate": 0.01915638106712274,
+                "max_depth": 3,
+                "num_leaves": 63,
+                "subsample": 0.8595887394346997,
+                "colsample_bytree": 0.7265212159909703,
+                "reg_alpha": 0.0,
+                "reg_lambda": 0.6081088354482388
+            }
+        },
+        {
+            "model_type": "Lasso",
+            "mcc": 0.1053723821597966,
+            "accuracy": 0.5540334855403348,
+            "walk_forward_mcc": 0.10249331531124713,
+            "sharpe_ratio": -1.6696503066649828,
+            "best_params": {
+                "penalty": "l2",
+                "C": 0.001741348688954274
+            }
+        },
+        {
+            "model_type": "SVC",
+            "mcc": 0.12879265578635016,
+            "accuracy": 0.5646879756468798,
+            "walk_forward_mcc": 0.08819157703272155,
+            "sharpe_ratio": -1.6523351100324877,
+            "best_params": {
+                "C": 0.10687385612378257,
+                "kernel": "rbf",
+                "gamma": 0.03211727679898045
+            }
+        },
+        {
+            "model_type": "LSTM",
+            "mcc": -0.08205322497043538,
+            "accuracy": 0.45878693623639194,
+            "walk_forward_mcc": 0.1172069461965869,
+            "sharpe_ratio": -0.33141758454221637,
+            "best_params": {
+                "lr": 0.00029018640634865427,
+                "module__hidden_dim": 64,
+                "optimizer__weight_decay": 0.0007150003184084584,
+                "module__dropout": 0.4520178282507621,
+                "max_epochs": 30,
+                "batch_size": 64,
                 "module__layers": 1,
                 "optimizer": "Adam"
             }

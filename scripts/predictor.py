@@ -62,15 +62,25 @@ class TrainingWorker(QThread):
             self.training_error.emit(str(e))
 
 class LSTMBrain(nn.Module):
-    def __init__(self, input_dim, hidden_dim=64, layers=2):
+    def __init__(self, input_dim: int, hidden_dim: int = 64, layers: int = 2, dropout: float = 0.3):
         super().__init__()
-        self.lstm = nn.LSTM(input_dim, hidden_dim, layers, batch_first=True)
+        # Note: Dropout in nn.LSTM only works if layers > 1
+        self.lstm = nn.LSTM(
+            input_dim,
+            hidden_dim,
+            layers,
+            batch_first=True,
+            dropout=dropout if layers > 1 else 0
+        )
+        self.dropout = nn.Dropout(dropout)
         self.fc = nn.Linear(hidden_dim, 1)
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
-        _, (hn, _) = self.lstm(x) # We only want the 'final thought' of the last layer
-        return self.sigmoid(self.fc(hn[-1])).squeeze(-1)
+        _, (hn, _) = self.lstm(x)
+        # Apply dropout to the final hidden state (last layer)
+        out = self.dropout(hn[-1])
+        return self.sigmoid(self.fc(out)).squeeze(-1)
 
 class LSTM:
     def __init__(self, seed: int):
@@ -105,7 +115,7 @@ class LSTM:
         x_test_3d, y_test_3d = self.create_3d_sequences(features_test_normalized, target_test.values)
 
         # Train
-        model = self.get_lstm_competitor(input_dim=x_train_3d.shape[2])
+        model = self.get_lstm_competitor(input_dim=x_train_3d.shape[2], hyperparams=hyperparams)
         model.fit(x_train_3d, y_train_3d)
 
         test_predictions = model.predict(x_test_3d)
@@ -130,6 +140,10 @@ class LSTM:
 
     @staticmethod
     def get_lstm_competitor(input_dim, hyperparams):
+        optimizers = {"Adam": torch.optim.Adam, "AdamW": torch.optim.AdamW}
+        if isinstance(hyperparams.get("optimizer"), str):
+            hyperparams.update({"optimizer": optimizers.get(hyperparams["optimizer"], torch.optim.Adam)})
+
         return NeuralNetClassifier(
             LSTMBrain,
             module__input_dim=input_dim,
@@ -154,11 +168,19 @@ class LSTM:
         )
 
     @staticmethod
-    def create_3d_sequences(data, targets, window_size=14):
+    def create_3d_sequences(data, targets, window_size: int = 14):
         x, y = [], []
-        for i in range(len(data) - window_size):
-            x.append(data[i: i + window_size])
-            y.append(targets[i + window_size])
+
+        # Convert to numpy arrays if they are pandas objects to ensure consistent behavior
+        data_arr = data.values if hasattr(data, 'values') else data
+        target_arr = targets.values if hasattr(targets, 'values') else targets
+
+        for i in range(len(data_arr) - window_size):
+            # Slicing works the same on both types
+            x.append(data_arr[i: i + window_size])
+            # Standard integer indexing now works for both
+            y.append(target_arr[i + window_size])
+
         return np.array(x).astype(np.float32), np.array(y).astype(np.float32)
 
 # Class to control and train models
@@ -173,6 +195,7 @@ class TrainingManager:
         target_file = os.path.join(DATA_DIR, f"master_sentiment.parquet")
 
         sent_df = pd.read_parquet(target_file, filters=[('ticker', '==', ticker)])
+        if len(sent_df) < 300: return df
 
         sent_df['event_date'] = pd.to_datetime(sent_df['event_date'])
         sent_df = sent_df.sort_values('event_date')
@@ -370,7 +393,7 @@ class TrainingManager:
 
         # Initialize Logistic Regression with a "Lasso" (L1) penalty
         model = LogisticRegression(
-            solver='liblinear',  # Required math solver for L1
+            solver='saga',
             random_state=self.seed,
             class_weight='balanced',  # Automatically handles Up/Down day imbalance
             **hyperparams
@@ -438,17 +461,17 @@ class TrainingManager:
         return lstm_model.train(hyperparams, features_train, target_train, features_test, target_test, price_returns)
 
     # Save models for all horizons with the best performing model type
-    def _save_model_assets(self, ticker: str, interval: str, full_results: dict,
-                                      features_data: pd.DataFrame, targets_dataframe: pd.DataFrame) -> None:
+    def _save_model_assets(self, ticker: str, interval: str, full_results: dict, features_data: pd.DataFrame, targets_dataframe: pd.DataFrame, all_hyperparameters) -> None:
         # Create the folder for this specific stock's model data to save
         save_folder = os.path.join(MODEL_DIR, f"{ticker}_{interval}")
         if not os.path.exists(save_folder): os.makedirs(save_folder)
 
         scaler = StandardScaler().fit(features_data)
-        scaled_features = scaler.transform(features_data)
+        scaled_features = scaler.transform(features_data) # noqa
 
         meta_full = {}
         for h, horizon_results in full_results.items():
+            hyperparameters: list = all_hyperparameters[f"{h}{interval[1]}"]
             meta_full[str(h)] = {
                 "best model": max(horizon_results, key=lambda x: x["absolute_sharpe"])["model_type"],
                 "training date": datetime.now().strftime("%Y-%m-%d"),
@@ -477,7 +500,8 @@ class TrainingManager:
                     lstm_base = LSTM(self.seed)
                     x_3d, y_3d = lstm_base.create_3d_sequences(x_final, y_final)
 
-                    model = lstm_base.get_lstm_competitor(input_dim=x_3d.shape[2])
+                    model = lstm_base.get_lstm_competitor(input_dim=x_3d.shape[2],
+                                                          hyperparams=next((hypers["best_params"] for hypers in hyperparameters if hypers["model_type"] == "LSTM"), {}))
                     model.fit(x_3d, y_3d)
                     save_file(model.module_.state_dict(), os.path.join(horizon_folder, f"{model_file}.safetensors"))
 
@@ -487,8 +511,8 @@ class TrainingManager:
                     spw = down_days / up_days if up_days > 0 else 1.0
 
                     model = LGBMClassifier(
-                        n_estimators=100, learning_rate=0.05, random_state=self.seed,
-                        scale_pos_weight=spw, verbose=-1, device="gpu", gpu_platform_id=0, gpu_device_id=0
+                        random_state=self.seed, scale_pos_weight=spw, verbose=-1, device="gpu", gpu_platform_id=0, gpu_device_id=0,
+                        **next((hypers["best_params"] for hypers in hyperparameters if hypers["model_type"] == "LGBM"), {})
                     )
 
                     model.fit(x_final, y_final)
@@ -496,9 +520,11 @@ class TrainingManager:
 
                 else:
                     if model_type == 'Lasso':
-                        model = LogisticRegression(penalty='l1', solver='liblinear', random_state=self.seed, class_weight='balanced')
+                        model = LogisticRegression(solver='saga', random_state=self.seed, class_weight='balanced',
+                                                   **next((hypers["best_params"] for hypers in hyperparameters if hypers["model_type"] == "Lasso"), {}))
                     else:  # SVC
-                        model = SVC(kernel='rbf', C=1.0, random_state=self.seed, class_weight='balanced', probability=True)
+                        model = SVC(random_state=self.seed, class_weight='balanced', probability=True,
+                                    **next((hypers["best_params"] for hypers in hyperparameters if hypers["model_type"] == "SVC"), {}))
 
                     model.fit(x_final, y_final)
                     joblib.dump(model, os.path.join(horizon_folder, f"{model_file}.joblib"))
@@ -566,7 +592,7 @@ class TrainingManager:
             results[h] = horizon_results
 
         # Save winning model data
-        self._save_model_assets(ticker, interval, results, features_train, train_data)
+        self._save_model_assets(ticker, interval, results, features_train, train_data, all_hyperparameters)
         return True
 
 ############################################################################
@@ -772,6 +798,9 @@ def generate_forecasts(processed_df: pd.DataFrame, assets: tuple, tech_info: tup
     with open(os.path.join(model_folder, 'metadata.json'), 'r') as f:
         meta = json.load(f)
 
+    with open(os.path.join(DATA_DIR, "model_hyperparameters.json"), 'r') as f:
+        hyper_meta = json.load(f)
+
     current_volatility_atr = float(processed_df['ATR'].iloc[-1])
     forecast_results = {}
 
@@ -782,54 +811,66 @@ def generate_forecasts(processed_df: pd.DataFrame, assets: tuple, tech_info: tup
     for step, actual_time in horizons.items():
         if target_dates[step] is None: continue
 
-        total_weight = 0
+        probs = {"LSTM": 0.5, "LGBM": 0.5, "SVC": 0.5, "Lasso": 0.5}
+        weights = {"LSTM": 0, "LGBM": 0, "SVC": 0, "Lasso": 0}
+        global_meta: list = hyper_meta[f"{step}{period}"]
+
         horizon_folder = os.path.join(model_folder, f"{step}_horizon_models")
         for model_filename in os.listdir(horizon_folder):
             model_path = os.path.join(horizon_folder, model_filename)
 
             if ".safetensors" in model_filename:
+                model_type = "LSTM"
                 recent_data = processed_df[features].tail(14)
                 scaled_seq = scaler.transform(recent_data)
 
                 # Convert to 3D: (1, 14, num_features)
                 x_3d = np.expand_dims(scaled_seq, axis=0).astype(np.float32)
 
-                brain = LSTMBrain(len(features))
+                params = next(m["best_params"] for m in global_meta if m["model_type"] == model_type)
+                brain = LSTMBrain(
+                    input_dim=len(features),
+                    hidden_dim=params["module__hidden_dim"],
+                    layers=params["module__layers"],
+                    dropout=params["module__dropout"],
+                )
+
                 state_dict = load_file(model_path)
                 brain.load_state_dict(state_dict)
                 brain.to(device)
                 brain.eval()
 
                 with torch.no_grad():
-                    input_tensor = torch.from_numpy(x_3d)
-                    LSTM_up_proba = float(brain(input_tensor).item())
-                    LSTM_up_proba_weighted = LSTM_up_proba * meta["LSTM_result"]["absolute_sharpe"]
-                    total_weight += meta["LSTM_result"]["absolute_sharpe"]
+                    probs[model_type] = float(brain(torch.from_numpy(x_3d)).item())
 
             elif ".txt" in model_filename:
+                model_type = "LGBM"
                 scaled_row = scaler.transform(processed_df[features].iloc[-1:])
                 booster = LGBMBooster(model_file=model_path)
-                LGBM_up_proba = float(booster.predict(scaled_row)[0])
-                LGBM_up_proba_weighted = LGBM_up_proba * meta["LGBM_result"]["absolute_sharpe"]
-                total_weight += meta["LGBM_result"]["absolute_sharpe"]
+                probs[model_type] = float(booster.predict(scaled_row)[0])
 
             else: # Joblib (Lasso or SVC)
                 scaled_row = scaler.transform(processed_df[features].iloc[-1:])
                 model = joblib.load(model_path)
                 if "SVC" in model_filename:
-                    SVC_up_proba = float(model.predict_proba(scaled_row)[0][1])
-                    SVC_up_proba_weighted = SVC_up_proba * meta["SVC_result"]["absolute_sharpe"]
-                    total_weight += meta["SVC_result"]["absolute_sharpe"]
+                    model_type = "SVC"
+                    probs[model_type] = float(model.predict_proba(scaled_row)[0][1])
                 else:
-                    LASSO_up_proba = float(model.predict_proba(scaled_row)[0][1])
-                    LASSO_up_proba_weighted = LASSO_up_proba * meta["Lasso_result"]["absolute_sharpe"]
-                    total_weight += meta["Lasso_result"]["absolute_sharpe"]
+                    model_type = "Lasso"
+                    probs[model_type] = float(model.predict_proba(scaled_row)[0][1])
 
-        avg_up_proba = (sum([LSTM_up_proba_weighted, LGBM_up_proba_weighted, SVC_up_proba_weighted, LASSO_up_proba_weighted])
-                        / total_weight)
+            mcc_val = next(m["mcc"] for m in global_meta if m["model_type"] == model_type)
+            if mcc_val > 0:
+                ticker_weight = meta.get(f"{model_type}_result", {}).get("absolute_sharpe", 0)
+                global_weight = next(abs(m["sharpe_ratio"]) for m in global_meta if m["model_type"] == model_type)
+
+                weights[model_type] = (ticker_weight * 0.6) + (global_weight * 0.4)
+
+        total_weight = sum(weights.values())
+        avg_up_proba = sum(probs[m] * weights[m] for m in probs) / total_weight if total_weight > 0 else 0.5
 
         # Calculate whether it will go up or down
-        adjusted_probability = avg_up_proba if avg_up_proba > 0.5 else 1 - avg_up_proba
+        adjusted_probability = max(avg_up_proba, 1 - avg_up_proba)
         direction = "UP ▲" if avg_up_proba > 0.5 else "DOWN ▼"
 
         # Calculate predicted price
@@ -849,10 +890,10 @@ def generate_forecasts(processed_df: pd.DataFrame, assets: tuple, tech_info: tup
             'time_difference': actual_time,
             'avg_probability': adjusted_probability,
             'dir': direction,
-            'LSTM_probability': LSTM_up_proba,
-            'LGBM_probability': LGBM_up_proba,
-            'SVC_probability': SVC_up_proba,
-            'LASSO_probability': LASSO_up_proba,
+            'LSTM_probability': probs["LSTM"],
+            'LGBM_probability': probs["LGBM"],
+            'SVC_probability': probs["SVC"],
+            'LASSO_probability': probs["Lasso"],
         }
 
     return forecast_results

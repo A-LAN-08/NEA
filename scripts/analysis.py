@@ -4,10 +4,14 @@ import json
 from tqdm import tqdm
 import multiprocessing
 from joblib import Parallel, delayed
+import logging
 
 from scripts.config import DATA_DIR
 from scripts.predictor import run_prediction_pipeline, Settings
 from scripts.data_management import UpdateWorker
+
+logger = logging.getLogger('yfinance')
+logger.setLevel(logging.CRITICAL)
 
 ############################################################################
 
@@ -52,7 +56,7 @@ if __name__ == '__main__':
     # with time_machine.travel(target_time):
         # run_batch_predictions()
 
-    Settings.VERBOSE = 1 # Change to 0 if you don't want logging clogging up console
+    Settings.VERBOSE = 0 # Change to 0 if you don't want logging clogging up console
 
     run_batch_predictions(
         sent=True, spy=True, cache=True, # Whether to update: News sentiment, SPY data (market sentiment indicator), stock cache

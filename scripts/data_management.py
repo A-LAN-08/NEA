@@ -150,7 +150,7 @@ class UpdateWorker(QThread):
 
             # Find the entry with the oldest modification time
             oldest_file = min(files, key=lambda e: e.stat().st_mtime)
-            start_date = os.path.getmtime(oldest_file.path) - pd.Timedelta(days=1)
+            start_date = datetime.fromtimestamp(os.path.getmtime(oldest_file.path), tz=timezone.utc) - pd.Timedelta(days=1)
 
         for interval in ["1h", "1d"]:
             # Download data
