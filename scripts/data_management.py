@@ -155,13 +155,14 @@ class UpdateWorker(QThread):
         for interval in ["1h", "1d"]:
             # Download data
             shared._ERRORS = {}
+            print(f"Downloading {interval} data...")
             batch_data = yf.download(ticker_list, start=start_date, interval=interval,
                                      group_by='ticker', auto_adjust=False, progress=True)
 
             # If any failed, retry the download for just those
             if shared._ERRORS:
-                print("Retrying failed tickers...")
                 failed_tickers = list(shared._ERRORS.keys())
+                print(f"\nRetrying failed tickers: {failed_tickers}")
                 shared._ERRORS = {}
                 extra_data = yf.download(failed_tickers, start=start_date, interval=interval,
                                          group_by='ticker', auto_adjust=False, progress=True)
@@ -189,8 +190,7 @@ class UpdateWorker(QThread):
                         new_rows = new_rows.iloc[:-1]
 
                     new_rows.index.name = "Date"
-                    new_rows.index = pd.to_datetime(new_rows.index, utc=True).tz_localize(None).strftime(
-                        '%Y-%m-%d %H:%M:%S')
+                    new_rows.index = pd.to_datetime(new_rows.index, utc=True).tz_localize(None).strftime('%Y-%m-%d %H:%M:%S')
 
                     cache_path = os.path.join(CACHE_DIR, f"{ticker}_{interval}.csv")
                     existing_df = load_data(ticker, interval)

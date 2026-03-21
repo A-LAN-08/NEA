@@ -42,7 +42,7 @@ def run_batch_predictions(sent, spy, cache, models, free_cores):
 
         with open(os.path.join(DATA_DIR, "ticker_map.json"), "r") as f:
             ticker_map = json.load(f)
-            ticker_list = list(ticker_map.keys())
+            ticker_list = sorted(list(ticker_map.values()))
 
         Parallel(n_jobs=num_cores)(
             delayed(process_single_ticker)(ticker) for ticker in tqdm(ticker_list, desc="Predicting")
@@ -59,9 +59,9 @@ if __name__ == '__main__':
     Settings.VERBOSE = 0 # Change to 0 if you don't want logging clogging up console
 
     run_batch_predictions(
-        sent=True, spy=True, cache=True, # Whether to update: News sentiment, SPY data (market sentiment indicator), stock cache
+        sent=False, spy=False, cache=False, # Whether to update: News sentiment, SPY data (market sentiment indicator), stock cache
         models=True, # Whether to train new models
-        free_cores=2 # How many CPU cores do you want left free
+        free_cores=5 # How many CPU cores do you want left free
     )
 
 
