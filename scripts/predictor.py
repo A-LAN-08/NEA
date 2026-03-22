@@ -702,9 +702,46 @@ def run_prediction_pipeline(ticker: str, interval: str) -> dict:
 
     return forecast_results
 
+def all_ticker_models_exist(ticker_dir: str, interval: str) -> bool:
+    root = Path(ticker_dir)
+    if not root.exists():
+        return False
+
+    required_root = ["features.joblib", "metadata.json", "scaler.joblib"]
+    for file in required_root:
+        if not (root / file).exists():
+            return False
+
+    horizons = [1, 2, 4, 8] if 'h' in interval else [1, 2, 5, 21]
+    model_types = {
+        "LGBM":  ".txt",
+        "LSTM":  ".safetensors",
+        "Lasso": ".joblib",
+        "SVC":   ".joblib"
+    }
+
+    for h in horizons:
+        h_folder = root / f"{h}_horizon_models"
+
+        if not h_folder.exists():
+            return False
+
+        for model_name, ext in model_types.items():
+            # Matches format: LGBM_model_1h.txt, etc.
+            expected_file = f"{model_name}_model_{h}{interval[1]}{ext}"
+            file_path = h_folder / expected_file
+
+            if not file_path.exists():
+                return False
+            elif file_path.stat().st_size == 0:
+                return False
+
+    return True
+
 # Adds in technical indicators, trains model if needed or loads it
 def prepare_prediction_data(ticker: str, interval: str) -> tuple:
     model_path = os.path.join(MODEL_DIR, f"{ticker}_{interval}")
+    manager = TrainingManager()
 
     # Ensure data exists
     df = load_data(ticker, interval)
@@ -728,17 +765,15 @@ def prepare_prediction_data(ticker: str, interval: str) -> tuple:
             df = pd.concat([df, new_row])
 
     # Trains a model if needed
-    existing_stems = {p.stem for p in Path(model_path).iterdir()} if os.path.exists(model_path) else set()
-    horizons = [1, 2, 4, 8] if 'h' in interval else [1, 2, 5, 21]
-    required_files = {f"model_{h}{interval[1]}" for h in horizons} | {"features", "scaler", "metadata"}
-    if not required_files.issubset(existing_stems):
+    if not all_ticker_models_exist(model_path, interval):
         # print("Empty or missing model files. Training...")
-        if not TrainingManager().run_training_pipeline(ticker, interval):
+        success = manager.run_training_pipeline(ticker, interval)
+        if not success:
             # print("Failed to train models.")
             return None, None
 
     # Load assets
-    processed_df = TrainingManager().calculate_technical_indicators(df.copy(), ticker, interval, training=False)
+    processed_df = manager.calculate_technical_indicators(df.copy(), ticker, interval, training=False)
     if processed_df.empty:
         # print("Failed to calculate technical indicators.")
         return None, None
