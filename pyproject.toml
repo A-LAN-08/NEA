@@ -14,6 +14,7 @@ dependencies = [
     "joblib>=1.5.3",
     "lightgbm>=4.6.0",
     "matplotlib>=3.10.8",
+    "matplotlib-venn>=1.1.2",
     "numpy>=2.4.3",
     "optuna>=4.8.0",
     "pandas>=3.0.1",

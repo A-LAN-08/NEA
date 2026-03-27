@@ -143,7 +143,8 @@ class UpdateWorker(QThread):
         self.updates_finished.emit()
 
     # Helper function to iterate through cache data to update
-    def data_updater(self):
+    @staticmethod
+    def data_updater():
         with os.scandir(CACHE_DIR) as entries:
             files = [e for e in entries if e.is_file()]
             ticker_list = sorted(list({f.name.split("_")[0] for f in files}))
@@ -204,53 +205,54 @@ class UpdateWorker(QThread):
                     continue
 
     @staticmethod
-    def update_spy():
-        for interval in ["1h", "1d"]:
-            # Get the needed interval format for yfinance from filename
-            seconds_map = {"m": 60, "h": 3600, "d": 86400}
-            unit, value = ''.join(filter(str.isalpha, interval)), int(''.join(filter(str.isdigit, interval)))
-            interval_seconds = seconds_map[unit] * value
+    def update_comparatives():
+        for comparative in ["^VIX", "^VVIX", "^TYX", "SPY"]:
+            for interval in ["1h", "1d"]:
+                # Get the needed interval format for yfinance from filename
+                seconds_map = {"m": 60, "h": 3600, "d": 86400}
+                unit, value = ''.join(filter(str.isalpha, interval)), int(''.join(filter(str.isdigit, interval)))
+                interval_seconds = seconds_map[unit] * value
 
-            # Load existing cached stock data from file
-            cache_file = os.path.join(DATA_DIR, f"SPY_{interval}.parquet")
+                # Load existing cached stock data from file
+                cache_file = os.path.join(DATA_DIR, f"{comparative.replace("^", "")}_{interval}.parquet")
 
-            df = pd.read_parquet(cache_file)
-            df.index.name = "Date"
-            df.index = pd.to_datetime(df.index, utc=True).tz_localize(None)
-            df = df.loc[:, ~df.columns.duplicated()]
+                df = pd.read_parquet(cache_file)
+                df.index.name = "Date"
+                df.index = pd.to_datetime(df.index, utc=True).tz_localize(None)
+                df = df.loc[:, ~df.columns.duplicated()]
 
-            # Find time period for which data needs to be downloaded
-            time_diff = datetime.now(timezone.utc).replace(tzinfo=None) - df.index[-1]
-            period = f"{int(min((time_diff.total_seconds() // 86400) + 5, 700))}d"
+                # Find time period for which data needs to be downloaded
+                time_diff = datetime.now(timezone.utc).replace(tzinfo=None) - df.index[-1]
+                period = f"{int(min((time_diff.total_seconds() // 86400) + 5, 700))}d"
 
-            needs_update = (time_diff.total_seconds() >= interval_seconds)
-            if needs_update:
-                # Fetch for the period that has passed
-                new_data = yf.download("SPY", period=period, interval=interval, progress=False, auto_adjust=False)
-                if new_data.empty: return
+                needs_update = (time_diff.total_seconds() >= interval_seconds)
+                if needs_update:
+                    # Fetch for the period that has passed
+                    new_data = yf.download(comparative, period=period, interval=interval, progress=False, auto_adjust=False)
+                    if new_data.empty: return
 
-                if isinstance(new_data.columns, pd.MultiIndex):
-                    new_data.columns = new_data.columns.get_level_values(0)
+                    if isinstance(new_data.columns, pd.MultiIndex):
+                        new_data.columns = new_data.columns.get_level_values(0)
 
-                new_data.index = pd.to_datetime(new_data.index, utc=True).tz_localize(None)
-                new_data.index.name = "Date"
+                    new_data.index = pd.to_datetime(new_data.index, utc=True).tz_localize(None)
+                    new_data.index.name = "Date"
 
-                now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
-                schedule = NYSE_CAL.schedule(start_date=now_utc_naive, end_date=now_utc_naive)
+                    now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+                    schedule = NYSE_CAL.schedule(start_date=now_utc_naive, end_date=now_utc_naive)
 
-                if not schedule.empty:
-                    mkt_open = schedule.iloc[0]['market_open'].replace(tzinfo=None)
-                    mkt_close = schedule.iloc[0]['market_close'].replace(tzinfo=None)
+                    if not schedule.empty:
+                        mkt_open = schedule.iloc[0]['market_open'].replace(tzinfo=None)
+                        mkt_close = schedule.iloc[0]['market_close'].replace(tzinfo=None)
 
-                    # If we are currently between open and close, the last downloaded row is "Live"
-                    if mkt_open <= now_utc_naive <= mkt_close:
-                        new_data = new_data.iloc[:-1]
+                        # If we are currently between open and close, the last downloaded row is "Live"
+                        if mkt_open <= now_utc_naive <= mkt_close:
+                            new_data = new_data.iloc[:-1]
 
-                # Append and save
-                updated_df = pd.concat([df, new_data])
-                updated_df = updated_df[~updated_df.index.duplicated(keep='last')]
-                updated_df = updated_df.loc[:, ~updated_df.columns.duplicated()]
-                updated_df.to_parquet(cache_file)
+                    # Append and save
+                    updated_df = pd.concat([df, new_data])
+                    updated_df = updated_df[~updated_df.index.duplicated(keep='last')]
+                    updated_df = updated_df.loc[:, ~updated_df.columns.duplicated()]
+                    updated_df.to_parquet(cache_file)
 
     @staticmethod
     def sentiment_update():

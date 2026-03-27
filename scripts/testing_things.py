@@ -3,484 +3,6 @@
 # set_identity("Name email@gmail.com")
 
 ##############################################################################################################
-
-def remove_all_ticker_info(tickers):
-    import os
-    import shutil
-    from tqdm import tqdm
-
-    from config import MODEL_DIR, LEDGER_DIR, CACHE_DIR
-
-    for f in tqdm(tickers):
-        try:
-            parts = f.split("_")
-            ticker = parts[0].upper()
-
-            if not (os.path.exists(os.path.join(MODEL_DIR, f"{ticker}_1d"))
-                and os.path.exists(os.path.join(MODEL_DIR, f"{ticker}_1h"))):
-
-                try: os.remove(os.path.join(LEDGER_DIR, f))
-                except: pass
-
-                try: shutil.rmtree(os.path.join(MODEL_DIR, f"{ticker}_1h"))
-                except: pass
-                try: shutil.rmtree(os.path.join(MODEL_DIR, f"{ticker}_1d"))
-                except: pass
-
-                try: os.remove(os.path.join(CACHE_DIR, f"{ticker}_1h.csv"))
-                except: pass
-                try: os.remove(os.path.join(CACHE_DIR, f"{ticker}_1d.csv"))
-                except: pass
-
-        except: pass
-
-##############################################################################################################
-""" sentiments """
-# Download sentiment data
-def get_full_sent():
-    from google.cloud import bigquery
-
-    sent_client = bigquery.Client(
-        project="market-predictor-throwaway",
-        client_options={"quota_project_id": "market-predictor-throwaway"}
-    )
-
-    print("Starting...")
-    with open(os.path.join(ROOT_DIR, "ticker_map.json"), "r") as f:
-        ticker_map = json.load(f)
-
-    all_results = []
-    company_names = list(ticker_map.keys())
-
-    print("Creating regex...")
-    half = len(company_names) // 2
-    c1, c2 = company_names[:half], company_names[half:]
-
-    r1 = "|".join([rf"\b{re.escape(name)}\b" for name in c1])
-    r2 = "|".join([rf"\b{re.escape(name)}\b" for name in c2])
-
-    for year in range(2016, 2027):
-        try:
-            print(f"Querying GDELT data for year {year}...")
-
-            start_pt = f"{year}-01-01"
-            end_pt = f"{year}-12-31"
-
-            for i, reg_part in enumerate([r1, r2]):
-                print()
-                query = f"""
-                        SELECT
-                            DATE(_PARTITIONTIME) AS event_date,
-                            LOWER(V2Organizations) AS organizations,
-                            AVG(CAST(SPLIT(V2Tone, ',')[OFFSET(0)] AS FLOAT64)) AS avg_tone,
-                            COUNT(*) AS article_count
-                        FROM
-                            -- Using the strictly partitioned table to save quota
-                            `gdelt-bq.gdeltv2.gkg_partitioned`
-                        WHERE
-                            _PARTITIONTIME BETWEEN TIMESTAMP('{start_pt}') AND TIMESTAMP('{end_pt}')
-                            AND REGEXP_CONTAINS(LOWER(V2Organizations), r'''({reg_part})''')
-                        GROUP BY
-                            event_date, organizations
-                        HAVING 
-                            article_count > 2
-                        ORDER BY
-                            event_date ASC
-                    """
-
-                try:
-                    print(f"Querying GDELT data for part {i+1}...")
-                    query_job = sent_client.query(query)
-                    print(f"--> JOB ID: {query_job.job_id}")
-
-                    # job_id = "PASTE_ID_HERE"
-                    # query_job = client.get_job(job_id)
-
-                    print("Converting to dataframe...")
-                    start = time.perf_counter()
-                    df = query_job.to_dataframe()
-                    print(f"Completed in {time.perf_counter() - start:.2f} seconds")
-
-                    if not df.empty:
-                        print(f"Mapping {len(df)} rows to tickers...")
-
-                        print("Finding tickers...")
-                        df['matched'] = df['organizations'].str.extract(f'({reg_part})', flags=re.IGNORECASE, expand=False)
-                        df['ticker'] = df['matched'].str.lower().map(ticker_map)
-
-                        print("Appending to total...")
-                        df = df.dropna(subset=['ticker'])
-                        all_results.append(df[['ticker', 'event_date', 'avg_tone', 'article_count']])
-                except KeyboardInterrupt:
-                    raise EndError
-                except Exception as e:
-                    print(f"Failed on year {year} part {i+1}: {e}")
-
-        except EndError:
-            break
-
-    if all_results:
-        print("Writing results to file...")
-        full_df = pd.concat(all_results, ignore_index=True)
-        full_df.to_parquet("full_sent.parquet", index=False)
-        print("Done!")
-        print(full_df.head())
-    else:
-        print("No data retrieved.")
-
-################################################
-""" sentiments """
-# Add sentiment technical indicators
-def boost_features(df):
-    print("Loading combined data...")
-    df['event_date'] = pd.to_datetime(df['event_date'])
-
-    # Collapse duplicate ticker/date entries into a single weighted average
-    print("Aggregating duplicates (Weighted Average)...")
-    df['weighted_tone'] = df['avg_tone'] * df['article_count']
-
-    df = df.groupby(['ticker', 'event_date']).agg({
-        'weighted_tone': 'sum',
-        'article_count': 'sum'
-    }).reset_index()
-
-    # Recalculate the final daily tone
-    df['avg_tone'] = df['weighted_tone'] / df['article_count']
-    df = df.drop(columns=['weighted_tone'])
-
-    # 1. Define US Market Days
-    us_bd = CustomBusinessDay(calendar=USFederalHolidayCalendar())
-    market_days = pd.date_range(start='2015-02-18', end='2026-03-11', freq=us_bd)
-
-    # 2. Reindexing - Creating a "Full Grid" (Ticker x Market Day)
-    tickers = df['ticker'].unique()
-    print(f"Expanding grid for {len(tickers)} tickers over {len(market_days)} market days...")
-
-    # Create a MultiIndex of all Tickers and Market Days
-    mux = pd.MultiIndex.from_product([tickers, market_days], names=['ticker', 'event_date'])
-
-    # Set existing data to index and reindex to the full market grid
-    df = df.set_index(['ticker', 'event_date']).reindex(mux).reset_index()
-
-    # 3. Fill Gaps & Basic Columns
-    print("Filling gaps and calculating basic features...")
-    df['has_news'] = df['article_count'].notna().astype(int)
-    df['article_count'] = df['article_count'].fillna(0)
-    df['avg_tone'] = df['avg_tone'].fillna(0)
-
-    # 4. Sentiment Impact: tone * log(count + 1)
-    df['sentiment_impact'] = df['avg_tone'] * np.log1p(df['article_count'])
-
-    # 5. Indicators (Grouped by Ticker)
-    print("Calculating Indicators (this might take a minute)...")
-
-    # We use transform to keep the same row count
-    df['sma_7d'] = df.groupby('ticker')['avg_tone'].transform(lambda x: x.rolling(window=7, min_periods=1).mean())
-    df['sma_30d'] = df.groupby('ticker')['avg_tone'].transform(lambda x: x.rolling(window=30, min_periods=1).mean())
-
-    # Sentiment Volatility (Rolling Standard Deviation)
-    df['sentiment_volatility_7d'] = df.groupby('ticker')['avg_tone'].transform(
-        lambda x: x.rolling(window=7, min_periods=1).std().fillna(0)
-    )
-    # Sentiment Momentum (The gap between short and long term vibes)
-    # Positive = Sentiment is improving; Negative = Sentiment is cooling off
-    df['sentiment_momentum'] = df['sma_7d'] - df['sma_30d']
-
-    # Volume Z-Score (The "Shock" factor)
-    # This identifies days when news volume is significantly higher than usual for THAT specific ticker
-    df['volume_zscore'] = df.groupby('ticker')['article_count'].transform(
-        lambda x: (x - x.rolling(30).mean()) / (x.rolling(30).std() + 1e-9)
-    ).fillna(0)
-
-    # 6. Final Save
-    output_file = os.path.join(ROOT_DIR, "data", "sentiment_features.parquet")
-    print(f"Saving model-ready data to {output_file}...")
-    df.to_parquet(output_file, index=False)
-    print("Done! Ready for the model.")
-
-# Remove them again
-def revert_to_raw():
-    path = os.path.join(ROOT_DIR, "data", "sentiment_features.parquet")
-    df = pd.read_parquet(path)
-
-    # List of engineered columns to remove
-    to_drop = [
-        'sentiment_impact', 'sma_7d', 'sma_30d',
-        'sentiment_volatility_7d', 'sentiment_momentum', 'volume_zscore'
-    ]
-
-    # Drop only the columns that actually exist in the file
-    df_raw = df.drop(columns=[c for c in to_drop if c in df.columns])
-
-    # Save as your new "Source of Truth"
-    new_path = os.path.join(ROOT_DIR, "data", "master_sentiment.parquet")
-    df_raw.to_parquet(new_path, index=False)
-    print(f"Reverted to raw data. Columns remaining: {df_raw.columns.tolist()}")
-
-# Tests to ensure data integrity
-def run_final_validation():
-    input_file = os.path.join(ROOT_DIR, "data", "sentiment_features.parquet")
-    print(f"Loading {input_file}...")
-    df = pd.read_parquet(input_file)
-
-    # 1. Statistical Outlier Detection
-    print("\n--- Feature Statistics ---")
-    cols_to_check = ['avg_tone', 'article_count', 'sentiment_impact', 'volume_zscore', 'sentiment_momentum']
-    stats = df[cols_to_check].describe().transpose()
-    print(stats[['min', 'max', 'mean', 'std']])
-
-    # 2. Logic & Continuity Checks
-    print("\n--- Integrity Checks ---")
-    # Check for Infinite values
-    inf_mask = np.isinf(df[cols_to_check]).any(axis=1)
-    print(f"Rows with Infinite values: {inf_mask.sum()}")
-
-    # Check for nulls
-    null_counts = df.isnull().sum().sum()
-    print(f"Total NULL values: {null_counts}")
-
-    # Verify Market Days (No Weekends)
-    weekends = df[df['event_date'].dt.dayofweek >= 5]
-    print(f"Weekend rows found: {len(weekends)}")
-
-    # 3. Visualizing a "High Intensity" Ticker
-    # Picking NVDA as it was in your sample
-    ticker_to_plot = 'NVDA'
-    sample = df[df['ticker'] == ticker_to_plot].sort_values('event_date')
-
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10), sharex=True)
-
-    # Plot Tone and SMAs
-    ax1.plot(sample['event_date'], sample['avg_tone'], alpha=0.3, label='Raw Tone', color='gray')
-    ax1.plot(sample['event_date'], sample['sma_7d'], label='7d SMA', color='blue')
-    ax1.plot(sample['event_date'], sample['sma_30d'], label='30d SMA', color='red')
-    ax1.set_title(f"Sentiment Trends: {ticker_to_plot}")
-    ax1.legend()
-
-    # Plot Volume Z-Score (The "Shock" factor)
-    ax2.bar(sample['event_date'], sample['volume_zscore'], color='purple', alpha=0.6, label='Volume Shock')
-    ax2.axhline(y=3, color='r', linestyle='--', label='High Volatility Threshold')
-    ax2.set_title("News Volume Shocks (Z-Score)")
-    ax2.legend()
-
-    plt.tight_layout()
-    plt.show()
-
-# Tests to ensure data integrity
-def run_stress_test():
-    input_file = os.path.join(ROOT_DIR, "data", "sentiment_features.parquet")
-    df = pd.read_parquet(input_file)
-
-    print("--- [STATISTICAL BOUNDARIES] ---")
-    # Verify values are within expected ranges observed in your sample
-    stats = df.describe().transpose()
-    print(stats[['min', 'max', 'mean']])
-
-    print("\n--- [LOGIC & ANOMALY CHECKS] ---")
-
-    # 1. Check for Infinite/NaN values in indicators
-    inf_count = np.isinf(df[['volume_zscore', 'sentiment_momentum']]).sum().sum()
-    nan_count = df.isnull().sum().sum()
-    print(f"Infinite values found: {inf_count}")
-    print(f"Missing values (NaN) found: {nan_count}")
-
-    # 2. Check the 'has_news' vs 'article_count' logic
-    # Every row with article_count > 0 must have has_news = 1
-    logic_fail = df[(df['article_count'] > 0) & (df['has_news'] == 0)]
-    print(f"Logic Mismatches (article_count > 0 but has_news = 0): {len(logic_fail)}")
-
-    # 3. Check for Extreme Volume Outliers
-    # Z-scores above 10 are very rare; above 50 usually indicates a data error
-    extreme_z = df[df['volume_zscore'] > 20]
-    print(f"Extreme Volume Shocks (>20 sigma): {len(extreme_z)}")
-
-    # 4. Weekend Check
-    # Ensure CustomBusinessDay removed Saturdays and Sundays
-    df['day_of_week'] = df['event_date'].dt.dayofweek
-    weekend_rows = df[df['day_of_week'] >= 5]
-    print(f"Weekend rows found (Should be 0): {len(weekend_rows)}")
-
-    # 5. Visual Spot Check for a High-Volume Ticker
-    print("\n--- [TIMELINE CONTINUITY: NVDA] ---")
-    nvda = df[df['ticker'] == 'NVDA'].sort_values('event_date')
-    print(nvda[['event_date', 'article_count', 'sma_7d', 'volume_zscore']].tail(5))
-
-##############################################################################################################
-""" post model checking """
-def calculate_average_confidence():
-    all_scores = []
-
-    ledger_files = os.listdir(LEDGER_DIR)
-
-    for file in ledger_files:
-        df = pd.read_csv(os.path.join(LEDGER_DIR, file))
-
-        for _, row in df.iterrows():
-            prob = float(row['Probability'].replace("%", ""))
-            direction = str(row['Direction'])
-
-            if "DOWN" in direction:
-                score = prob * -1 / 100
-            else:
-                score = prob / 100
-
-            all_scores.append(score)
-
-    if all_scores:
-        avg_confidence = sum(all_scores) / len(all_scores)
-        print(f"Processed {len(all_scores)} predictions.")
-        print(f"Global Average Confidence Score: {avg_confidence:.4f}")
-
-        if avg_confidence > 0:
-            print("Overall Bias: BULLISH")
-        else:
-            print("Overall Bias: BEARISH")
-    else:
-        print("No valid prediction data found in ledgers.")
-
-def remove_incomplete():
-    ticker_list = {'FIGR', 'AMRZ', 'FNGU', 'TEM', 'VG', 'WM', 'GEV', 'RDDT', 'ALAB', 'KLAR', 'ETH', 'FIG', 'RAL', 'NBIS', 'GLXY', 'CRCL', 'VIK', 'Q', 'TTAN', 'RBRK', 'GRAL', 'SOLS', 'ETHA', 'SARO', 'KRMN', 'FETH', 'BMNR'}
-
-    df = pd.read_parquet(os.path.join(DATA_DIR, "master_sentiment.parquet"))
-    valid_tickers = json.load(open(os.path.join(ROOT_DIR, "valid_tickers.json")))
-    valid_tickers_with_history = json.load(open(os.path.join(ROOT_DIR, "valid_tickers_with_history.json")))
-    ticker_map = json.load(open(os.path.join(ROOT_DIR, "ticker_map.json")))
-
-    for t in ticker_list:
-
-        try: shutil.rmtree(os.path.join(MODEL_DIR, f"{t}_1h"))
-        except: pass
-        try: shutil.rmtree(os.path.join(MODEL_DIR, f"{t}_1d"))
-        except: pass
-        try: shutil.rmtree(os.path.join(CACHE_DIR, f"{t}"))
-        except: pass
-
-        try: os.remove(os.path.join(LEDGER_DIR, f"{t}_ledger.csv"))
-        except: pass
-
-        df = df[df['ticker'].str.upper() != t.upper()]
-
-        try: valid_tickers.remove(t)
-        except: pass
-        try: valid_tickers_with_history.remove(t)
-        except: pass
-
-    ticker_map = {k: v for k, v in ticker_map.items() if v not in ticker_list}
-
-    df.to_parquet(os.path.join(DATA_DIR, "master_sentiment.parquet"))
-
-    with open(os.path.join(ROOT_DIR, "valid_tickers.json"), "w") as f:
-        json.dump(valid_tickers, f)
-
-    with open(os.path.join(ROOT_DIR, "valid_tickers_with_history.json"), "w") as f:
-        json.dump(valid_tickers_with_history, f)
-
-    with open(os.path.join(ROOT_DIR, "ticker_map.json"), "w") as f:
-        json.dump(ticker_map, f)
-
-def find_missing_files():
-    caches = {f for f in os.listdir(CACHE_DIR) if os.path.isdir(os.path.join(CACHE_DIR, f))}
-    ledgers = {l.split("_")[0] for l in os.listdir(LEDGER_DIR)}
-    models = {f.split("_")[0] for f in os.listdir(MODEL_DIR) if os.path.isdir(os.path.join(MODEL_DIR, f))}
-    sent_tickers = set(pd.read_parquet(os.path.join(DATA_DIR, "master_sentiment.parquet"))['ticker'].unique().tolist())
-
-    # The '&' operator finds items present in ALL sets
-    common = caches & ledgers & models
-    # All unique tickers across every folder
-    total = caches | ledgers | models
-    # Tickers missing at least one component
-    incomplete = total - common
-
-    # Specific breakdowns
-    only_cache = caches - (ledgers | models)
-    missing_models = caches - models
-    missing_ledgers = caches - ledgers
-    not_sent = total - sent_tickers
-    sent_not_other = sent_tickers - total
-
-    ticker_map = json.load(open(os.path.join(ROOT_DIR, "ticker_map.json")))
-    valid_tickers = json.load(open(os.path.join(ROOT_DIR, "valid_tickers.json")))
-    valid_tickers_with_history = json.load(open(os.path.join(ROOT_DIR, "valid_tickers_with_history.json")))
-
-    # 5. Print Results
-    print(f"Ticker map: {len(ticker_map)}")
-    print(f"Valid tickers: {len(valid_tickers)}")
-    print(f"Valid tickers with history: {len(valid_tickers_with_history)}")
-    print(f"Total Unique Tickers Found: {len(total)}")
-    print(f"Complete Sets (Common): {len(common)}")
-    print(f"Incomplete Sets: {len(incomplete)}")
-    print(f"Sent Tickers: {len(sent_tickers)}")
-    print(f"In sent not other: {len(not_sent)}")
-
-    print(f"Missing Models: {missing_models}")
-    print(f"Missing Ledgers: {missing_ledgers}")
-    print(f"Only Cache: {missing_models}")
-    print(f"Only Sent: {sent_not_other}")
-
-    # with open(os.path.join(ROOT_DIR, "valid_tickers.json"), "w") as f:
-    #     json.dump(list(total), f)
-    #
-    #
-    # pattern = r',?\s+(inc|corp|ltd|co|llc|plc|l\.p\.|incorporated|corporation)\.?\s*$'
-    # ticker_map = {}
-    #
-    # for symbol in tqdm(total):
-    #     try:
-    #         comp = Company(symbol)
-    #         ticker_map[re.sub(pattern, '', comp.name, flags=re.IGNORECASE).strip()] = symbol
-    #     except:
-    #         ticker_map[symbol] = symbol
-    #
-    # with open(os.path.join(ROOT_DIR, "ticker_map.json"), "w") as f:
-    #     json.dump(ticker_map, f)
-
-##############################################################################################################
-
-def cache_refactor():
-
-    tickers = [f for f in os.listdir(CACHE_DIR) if os.path.isdir(os.path.join(CACHE_DIR, f))]
-
-    for ticker in tqdm(tickers):
-        old_folder = os.path.join(CACHE_DIR, ticker)
-        path_1h = os.path.join(old_folder, "1h_data.csv")
-        path_1d = os.path.join(old_folder, "1d_data.csv")
-
-        if os.path.exists(path_1h):
-            shutil.move(path_1h, os.path.join(CACHE_DIR, f"{ticker}_1h.csv"))
-
-        if os.path.exists(path_1d):
-            shutil.move(path_1d, os.path.join(CACHE_DIR, f"{ticker}_1d.csv"))
-
-        shutil.rmtree(old_folder)
-
-def timefy():
-    tickers = os.listdir(CACHE_DIR)
-
-    for ticker in tqdm(tickers):
-        try:
-            df = pd.read_csv(os.path.join(CACHE_DIR, ticker), index_col=0, parse_dates=True)
-
-            df.index = pd.to_datetime(df.index)
-            # df.index = df.index.strftime('%Y-%m-%d %H:%M:%S')
-            if ticker.split("_")[1] == "1h":
-                df = df[:-7]
-            else:
-                df = df[:-2]
-
-            df.index.name = "Date"
-
-            df.to_csv(os.path.join(CACHE_DIR, ticker))
-
-        except:
-            df = df[:-7]
-
-            df.index = pd.to_datetime(df.index)
-            df.index = df.index.strftime('%Y-%m-%d %H:%M:%S')
-            df.index.name = "Date"
-
-            df.to_csv(os.path.join(CACHE_DIR, ticker))
-
-##############################################################################################################
 """ downloading data things """
 def data_update():
     import os
@@ -632,7 +154,7 @@ def get_spy():
 
         data.to_parquet(os.path.join(DATA_DIR, f"SPY_{interval}.parquet"))
 
-def get_vxx():
+def get_special(key):
     import pandas as pd
     import os
     from config import DATA_DIR
@@ -641,7 +163,11 @@ def get_vxx():
     from data_management import NYSE_CAL
 
     for interval in ["1h", "1d"]:
-        data = yf.download("VXX", interval=interval, period="max", auto_adjust=False, progress=False)
+        data = yf.download(key, interval=interval, period="max", auto_adjust=False, progress=True)
+
+        if data.empty:
+            print("Empty data")
+            continue
 
         # Flattens columns if MultiIndex
         if isinstance(data.columns, pd.MultiIndex):
@@ -662,20 +188,199 @@ def get_vxx():
             if mkt_open <= now_utc_naive <= mkt_close:
                 data = data.iloc[:-1]
 
-        data.to_parquet(os.path.join(DATA_DIR, f"VXX_{interval}.parquet"))
+        data.to_parquet(os.path.join(DATA_DIR, f"{key}_{interval}.parquet"))
 
 ##############################################################################################################
+"""testing pipeline"""
+def test_train():
+    import pandas as pd
+    import os
 
+    from scripts.config import MODEL_DIR
+    from scripts.predictor import TrainingManager, all_ticker_models_exist
+    from scripts.data_management import load_data
+
+    ticker = "AAPL"
+    interval = "1d"
+
+    full_data = load_data(ticker, interval)
+    cutoff_date = full_data.index.max() - pd.Timedelta(days=(60 if interval == "1d" else 20))
+    training_data = full_data[full_data.index < cutoff_date]
+
+    if not all_ticker_models_exist(os.path.join(MODEL_DIR, f"{ticker}_{interval}"), interval):
+        trainer = TrainingManager()
+        trainer.run_training_pipeline(ticker, interval, override_data=training_data)
+
+def test_predict():
+    import os
+    import json
+    import joblib
+    import numpy as np
+    import pandas as pd
+    import torch
+    from lightgbm import Booster as LGBMBooster
+    from safetensors.torch import load_file
+
+    from scripts.config import MODEL_DIR, DATA_DIR
+    from scripts.data_management import load_data
+    from scripts.predictor import LSTMBrain, save_prediction, get_market_dates
+    import scripts.indicators # noqa
+
+    ##### SETUP
+
+    ticker = "AAPL"
+    interval = "1d"
+
+    full_data = load_data(ticker, interval)
+    model_folder = os.path.join(MODEL_DIR, f"{ticker}_{interval}")
+
+    with open(os.path.join(model_folder, 'metadata.json'), 'r') as f:
+        meta = json.load(f)
+    with open(os.path.join(DATA_DIR, "model_hyperparameters.json"), 'r') as f:
+        hyper_meta = json.load(f)
+
+    ##### AI BRAINS
+
+    scaler = joblib.load(f"{model_folder}/scaler.joblib")
+    features = joblib.load(f"{model_folder}/features.joblib")
+
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model_registry = {}
+    horizons = {1:1, 2:2, 4:4, 8:25} if "h" in interval else {1:1, 2:2, 5:7, 21:28}
+    period = "h" if interval == "1h" else "d"
+
+    for step in horizons.keys():
+        horizon_folder = os.path.join(model_folder, f"{step}_horizon_models")
+        if not os.path.exists(horizon_folder): continue
+
+        model_registry[step] = {"models": {}, "weights": {}}
+        global_meta = hyper_meta.get(f"{step}{period}", [])
+
+        for model_filename in os.listdir(horizon_folder):
+            model_path = os.path.join(horizon_folder, model_filename)
+
+            # Identify model type
+            if ".safetensors" in model_filename:
+                model_type = "LSTM"
+                params = next(m["best_params"] for m in global_meta if m["model_type"] == model_type)
+                # Initialize brain once
+                brain = LSTMBrain(
+                    input_dim=len(features),
+                    hidden_dim=params["module__hidden_dim"],
+                    layers=params["module__layers"],
+                    dropout=params["module__dropout"],
+                )
+                brain.load_state_dict(load_file(model_path))
+                brain.to(device).eval()
+                model_registry[step]["models"][model_type] = brain
+
+            elif ".txt" in model_filename:
+                model_type = "LGBM"
+                model_registry[step]["models"][model_type] = LGBMBooster(model_file=model_path)
+
+            else:
+                model_type = "SVC" if "SVC" in model_filename else "Lasso"
+                model_registry[step]["models"][model_type] = joblib.load(model_path)
+
+            mcc_val = next((m["mcc"] for m in global_meta if m["model_type"] == model_type), 0)
+            if mcc_val > 0:
+                ticker_weight = meta.get(f"{model_type}_result", {}).get("absolute_sharpe", 0)
+                global_weight = next((abs(m["sharpe_ratio"]) for m in global_meta if m["model_type"] == model_type), 0)
+                model_registry[step]["weights"][model_type] = (ticker_weight * 0.6) + (global_weight * 0.4)
+            else:
+                model_registry[step]["weights"][model_type] = 0
+
+    ##### Walk forward predictions
+
+    last_train_date = pd.to_datetime(meta["training data end"])
+    test_data = full_data[full_data.index > last_train_date]
+
+    history = full_data[full_data.index <= last_train_date].tail(400).copy()
+    processed_df = history.ind.add_indicators(ticker, interval)
+
+    for current_time in test_data.index:
+        current_price = processed_df['Adj Close'].iloc[-1]
+        current_volatility_atr = float(processed_df['ATR'].iloc[-1])
+
+        target_dates = get_market_dates(current_time, horizons, period)
+        if len(target_dates) < 1: continue
+
+        step_forecasts = {}
+        for step, bundle in model_registry.items():
+            if target_dates[step] is None: continue
+
+            probs = {}
+            for model_type, model_obj in bundle["models"].items():
+                if model_type == "LSTM":
+                    recent_data = processed_df[features].tail(14)
+                    scaled_seq = scaler.transform(recent_data)
+                    x_3d = np.expand_dims(scaled_seq, axis=0).astype(np.float32)
+
+                    with torch.no_grad():
+                        probs[model_type] = float(model_obj(torch.from_numpy(x_3d).to(device)).item())
+
+                elif model_type == "LGBM":
+                    scaled_row = scaler.transform(processed_df[features].iloc[-1:])
+                    probs[model_type] = float(model_obj.predict(scaled_row)[0])
+
+                else:  # Lasso / SVC
+                    scaled_row = scaler.transform(processed_df[features].iloc[-1:])
+                    probs[model_type] = float(model_obj.predict_proba(scaled_row)[0][1])
+
+            weights = bundle["weights"]
+            total_weight = sum(weights.values())
+            avg_up_proba = sum(probs[m] * weights[m] for m in probs) / total_weight if total_weight > 0 else 0.5
+
+            # Calculate whether it will go up or down
+            adjusted_probability = max(avg_up_proba, 1 - avg_up_proba)
+            direction = "UP ▲" if avg_up_proba > 0.5 else "DOWN ▼"
+
+            # Calculate predicted price
+            direction_multiplier = 1 if avg_up_proba > 0.5 else -1
+            confidence_strength = 2 * (adjusted_probability - 0.5)
+            expected_move_magnitude = current_volatility_atr * np.sqrt(step)
+
+            predicted_price = current_price + (direction_multiplier * expected_move_magnitude * confidence_strength)
+            capped_width = min(expected_move_magnitude * (1.0 + confidence_strength), current_price * 0.15)
+
+            step_forecasts[step] = {
+                "current_price": current_price,
+                'price': predicted_price,
+                'up': predicted_price + capped_width,
+                'lo': predicted_price - capped_width,
+                'target_date': target_dates[step],
+                'time_difference': horizons[step],
+                'avg_probability': adjusted_probability,
+                'dir': direction,
+                'LSTM_probability': probs["LSTM"],
+                'LGBM_probability': probs["LGBM"],
+                'SVC_probability': probs["SVC"],
+                'LASSO_probability': probs["Lasso"],
+            }
+
+        save_prediction(ticker, interval, current_time, step_forecasts)
 
 ##############################################################################################################
 
 if __name__ in "__main__":
 
-    from predictor import run_prediction_pipeline
-    print("Starting...")
-    r = run_prediction_pipeline("VXX", "1h")
-    print(r)
+    # from predictor import run_prediction_pipeline
+    # print("Starting...")
+    # r = run_prediction_pipeline("AAPL", "1h")
+    # print(r)
 
     # initial_download()
+
+    # import folder_trees
+    # folder_trees.generate_tree("C:/Users/adlan_3zfnjq7/Desktop/Alex - Main/Projects/Stock Market Predictor/models/LH_1h")
+
+    # find_missing_files()
+
+    # get_special("^VIX")
+    # get_special("^VVIX")
+    # get_special("^TYX")
+
+    test_train()
+    test_predict()
 
     pass

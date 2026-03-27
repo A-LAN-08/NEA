@@ -12,8 +12,6 @@ import joblib
 import numpy as np
 import pandas as pd
 import pandas_market_calendars as mcal
-import talib
-from pykalman import KalmanFilter
 import yfinance as yf
 from lightgbm import LGBMClassifier
 from lightgbm import Booster as LGBMBooster
@@ -36,6 +34,7 @@ NYSE_CAL = mcal.get_calendar('NYSE')
 # Custom imports
 from scripts.data_management import load_data
 from scripts.config import LEDGER_DIR, MODEL_DIR, DATA_DIR
+import scripts.indicators # Custom pandas dataframe behaviour
 
 class Settings:
     VERBOSE = 0 # Set whether to display logging or not
@@ -190,148 +189,6 @@ class TrainingManager:
         self.sharpe_threshold = 0.50 # Min sharpe value for model to be useful
         self.__test_size = 0.2 # How much of data used to test vs train
 
-    @staticmethod
-    def _integrate_sentiment(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
-        target_file = os.path.join(DATA_DIR, f"master_sentiment.parquet")
-
-        sent_df = pd.read_parquet(target_file, filters=[('ticker', '==', ticker)])
-        if len(sent_df) < 300: return df
-
-        sent_df['event_date'] = pd.to_datetime(sent_df['event_date'])
-        sent_df = sent_df.sort_values('event_date')
-
-        # Sentiment Impact: tone * log(count + 1)
-        sent_df['sentiment_impact'] = sent_df['avg_tone'] * np.log1p(sent_df['article_count'])
-
-        # Sentiment simple moving averages
-        sent_df['sentiment_sma_7d'] = sent_df['avg_tone'].rolling(7, min_periods=1).mean()
-        sent_df['sentiment_sma_30d'] = sent_df['avg_tone'].rolling(30, min_periods=1).mean()
-
-        # Sentiment Volatility (Rolling Standard Deviation)
-        sent_df['sentiment_volatility_7d'] = sent_df['avg_tone'].rolling(7, min_periods=1).std().fillna(0)
-
-        # Sentiment Momentum (The gap between short and long term vibes)
-        # Positive = Sentiment is improving; Negative = Sentiment is cooling off
-        sent_df['sentiment_momentum'] = sent_df['sentiment_sma_7d'] - sent_df['sentiment_sma_30d']
-
-        # Sentiment volume Z-Score (The "Shock" factor)
-        # This identifies days when news volume is significantly higher than usual for THAT specific ticker
-        sent_df['sentiment_volume_zscore'] = (
-                sent_df['article_count'] / (sent_df['article_count'].rolling(30).mean() + 1e-9)
-        ).fillna(0)
-
-        # Other sentiment features
-        sent_df['sentiment_shock'] = sent_df['avg_tone'].diff().fillna(0)
-        sent_df['negative_pressure'] = (
-            np.abs(np.minimum(sent_df['avg_tone'], 0)) * np.log1p(sent_df['article_count'])
-        )
-        sent_df['days_since_news'] = (sent_df['article_count'] > 0).astype(int).groupby((sent_df['article_count'] > 0).cumsum()).cumcount()
-
-        sent_df['merge_date'] = sent_df['event_date'] + pd.Timedelta(days=1)
-        sent_df = sent_df[sent_df.columns.difference(['ticker', 'event_date'])]
-
-        index_name = df.index.name if df.index.name else 'index'
-        df['merge_date'] = pd.to_datetime(df.index).normalize()
-        df = df.reset_index()
-
-        df = pd.merge(df, sent_df, on='merge_date', how='left')
-        df = df.set_index(index_name)
-        df = df.drop(columns=['merge_date']).fillna(0)
-
-        return df
-
-    @staticmethod
-    def calculate_hurst(series, window=100):
-        if len(series) < window: return 0.5
-        lags = range(2, 20)
-        tau = [np.sqrt(np.std(np.subtract(series[lag:], series[:-lag]))) + 1e-9 for lag in lags]
-        poly = np.polyfit(np.log(lags), np.log(tau), 1)
-        return poly[0] * 2.0
-
-    # Calculate technical indicators
-    def calculate_technical_indicators(self, df: pd.DataFrame, ticker: str, interval: str, training: bool = True) -> pd.DataFrame:
-        df = self._integrate_sentiment(df, ticker)
-
-        # Horizon (h) targets for selected period (p)
-        p = "h" if "h" in interval else "d"
-        for h in ([1,2,4,8] if "h" in interval else [1,2,5,21]):
-            df[f'target_cls_{h}{p}'] = df['Adj Close'].shift(-h).gt(df['Adj Close']).astype(int)
-
-        df['return'] = df['Adj Close'].pct_change()
-        for i in range(1, 4): df[f'return_lag_{i}'] = df['return'].shift(i)
-
-        # Technical indicators
-        df['RSI'] = talib.RSI(df['Adj Close'], timeperiod=14)
-        macd, _, macdhist = talib.MACD(df['Adj Close'], fastperiod=12, slowperiod=26, signalperiod=9)
-        df['MACD_Hist'] = macdhist
-        df['ADX'] = talib.ADX(df['High'], df['Low'], df['Adj Close'], timeperiod=14)
-        df['ATR'] = talib.ATR(df['High'], df['Low'], df['Adj Close'], timeperiod=14)
-        df['MA_200'] = talib.SMA(df['Adj Close'], timeperiod=200)
-        df['PDMA_200'] = (df['Adj Close'] / df['MA_200']) - 1
-
-        df['OBV'] = talib.OBV(df['Adj Close'], df['Volume'])
-        upper, mid, lower = talib.BBANDS(df['Adj Close'], timeperiod=20)
-        df['BBP'] = (df['Adj Close'] - lower) / (upper - lower)
-        df['ROC'] = talib.ROC(df['Close'], timeperiod=10)
-
-        # Deviations using all of OHLC
-        df['range_pct'] = (df['High'] - df['Low']) / df['Close']
-        df['body_pct'] = (df['Close'] - df['Open']) / df['Close']
-        df['upper_shadow_pct'] = (df['High'] - df[['Open', 'Close']].max(axis=1)) / df['Close']
-        df['lower_shadow_pct'] = (df[['Open', 'Close']].min(axis=1) - df['Low']) / df['Close']
-
-        # Hurst Exponent
-        df['Hurst_Exponent'] = df['Close'].rolling(window=100, min_periods=100).apply(self.calculate_hurst, raw=True)
-        df['Hurst_Exponent'] = df['Hurst_Exponent'].fillna(0.5)
-
-        # Kalman Filter
-        def get_kalman_filter(series):
-            kf = KalmanFilter(transition_matrices=[1],
-                              observation_matrices=[1],
-                              initial_state_mean=series.iloc[0],
-                              initial_state_covariance=1,
-                              observation_covariance=1,
-                              transition_covariance=0.01)
-            state_means, _ = kf.filter(series.values)
-            return state_means.flatten()
-
-        df['Kalman_Price'] = get_kalman_filter(df['Close'])
-        df['Kalman_Dev'] = (df['Close'] - df['Kalman_Price']) / df['Kalman_Price']  # Deviation from "True" price
-
-        # Efficiency ratio
-        price_diff = df['Close'].diff(20).abs()
-        volatility = df['Close'].diff().abs().rolling(20).sum()
-        df['Efficiency_Ratio'] = price_diff / volatility  # 1.0 = Strong Trend, 0.0 = Choppy/Noisy
-
-        # Market context
-        spy_data = pd.read_parquet(os.path.join(DATA_DIR, f'SPY_{interval}.parquet'))
-        spy_data.index.name = "Date"
-        spy_data.index = pd.to_datetime(spy_data.index, utc=True).tz_localize(None)
-        spy_data = spy_data[~spy_data.index.duplicated(keep='first')]
-
-        aligned_market = spy_data.reindex(df.index).ffill()
-        market_returns = aligned_market['Close'].pct_change()
-        stock_returns = df['return']
-
-        # Rolling Beta (60-period): Covariance(stock, market) / Variance(market)
-        rolling_cov = stock_returns.rolling(window=60).cov(market_returns)
-        rolling_var = market_returns.rolling(window=60).var()
-        df['Market_Beta'] = (rolling_cov / rolling_var + 1e-9).fillna(1.0)  # Assume 1.0 if no data
-
-        # Relative Strength: Ratio of stock price to market price (normalized)
-        df['Relative_Strength'] = (df['Adj Close'] / aligned_market['Close']).pct_change().fillna(0)
-
-        # Other indicators
-        df['vol_ratio'] = df["return"].rolling(5).std() / df["return"].rolling(50).std()
-        df['hour'] = df.index.hour
-        df['day_of_week'] = df.index.dayofweek
-        df['month'] = df.index.month
-
-        if training:
-            df = df.dropna()
-
-        return df
-
     # Evaluate model performance with accuracy and sharpe ratio
     @staticmethod
     def evaluate_performance(actual_direction: pd.Series, predicted_direction: np.ndarray, actual_returns: np.ndarray):
@@ -348,8 +205,7 @@ class TrainingManager:
         return hit_rate, sharpe_ratio, abs(sharpe_ratio), (sharpe_ratio < 0)
 
     # Train and evaluate LightGBM with walk-forward validation
-    def _train_lightgbm(self, hyperparams: dict, features_train: pd.DataFrame, target_train: pd.Series, features_test: pd.DataFrame,
-                        target_test: pd.Series, price_returns: np.ndarray) -> dict:
+    def _train_lightgbm(self, hyperparams: dict, features_train: pd.DataFrame, target_train: pd.Series, features_test: pd.DataFrame, target_test: pd.Series, price_returns: np.ndarray) -> dict:
         # Put all indicators on the same scale (0 to 1 range) so it matches inference
         data_normalizer = StandardScaler()
         features_train_normalized = pd.DataFrame(data_normalizer.fit_transform(features_train), columns=features_train.columns)
@@ -382,8 +238,7 @@ class TrainingManager:
                 'raw_predictions': test_predictions, 'trained_model_object': model, 'feature_scaler': data_normalizer}
 
     # Train and evaluate Lasso Logistic Regression with walk-forward validation
-    def _train_lasso_regression(self, hyperparams: dict, features_train: pd.DataFrame, target_train: pd.Series,
-                                features_test: pd.DataFrame, target_test: pd.Series, price_returns: np.ndarray) -> dict:
+    def _train_lasso_regression(self, hyperparams: dict, features_train: pd.DataFrame, target_train: pd.Series, features_test: pd.DataFrame, target_test: pd.Series, price_returns: np.ndarray) -> dict:
         # Put all indicators on the same scale (0 to 1 range)
         data_normalizer = StandardScaler()
 
@@ -418,8 +273,7 @@ class TrainingManager:
             'raw_predictions': test_predictions, 'trained_model_object': model, 'feature_scaler': data_normalizer}
 
     # Train and evaluate SVC with walk-forward validation
-    def _train_support_vector(self, hyperparams: dict, features_train: pd.DataFrame, target_train: pd.Series, features_test: pd.DataFrame,
-                              target_test: pd.Series, price_returns: np.ndarray) -> dict:
+    def _train_support_vector(self, hyperparams: dict, features_train: pd.DataFrame, target_train: pd.Series, features_test: pd.DataFrame, target_test: pd.Series, price_returns: np.ndarray) -> dict:
         # Put all indicators on the same scale (0 to 1 range) [SVC very sensitive to scale]
         data_normalizer = StandardScaler()
 
@@ -454,14 +308,13 @@ class TrainingManager:
             'sharpe_ratio': sharpe, 'absolute_sharpe': abs_sharpe, 'logic_flipped': needs_flip,
             'raw_predictions': test_predictions, 'trained_model_object': model, 'feature_scaler': data_normalizer}
 
-    def _train_lstm(self, hyperparams: dict, features_train: pd.DataFrame, target_train: pd.Series, features_test: pd.DataFrame,
-                    target_test: pd.Series, price_returns: np.ndarray) -> dict:
+    def _train_lstm(self, hyperparams: dict, features_train: pd.DataFrame, target_train: pd.Series, features_test: pd.DataFrame, target_test: pd.Series, price_returns: np.ndarray) -> dict:
 
         lstm_model = LSTM(self.seed)
         return lstm_model.train(hyperparams, features_train, target_train, features_test, target_test, price_returns)
 
     # Save models for all horizons with the best performing model type
-    def _save_model_assets(self, ticker: str, interval: str, full_results: dict, features_data: pd.DataFrame, targets_dataframe: pd.DataFrame, all_hyperparameters) -> None:
+    def _save_model_assets(self, ticker: str, interval: str, training_data_end: pd.Timestamp, full_results: dict, features_data: pd.DataFrame, targets_dataframe: pd.DataFrame, all_hyperparameters) -> None:
         # Create the folder for this specific stock's model data to save
         save_folder = os.path.join(MODEL_DIR, f"{ticker}_{interval}")
         if not os.path.exists(save_folder): os.makedirs(save_folder)
@@ -469,12 +322,14 @@ class TrainingManager:
         scaler = StandardScaler().fit(features_data)
         scaled_features = scaler.transform(features_data) # noqa
 
-        meta_full = {}
+        meta_full = {
+            "training date": datetime.now().strftime("%Y-%m-%d"),
+            "training data end": str(training_data_end.strftime("%Y-%m-%d")),
+        }
         for h, horizon_results in full_results.items():
             hyperparameters: list = all_hyperparameters[f"{h}{interval[1]}"]
             meta_full[str(h)] = {
                 "best model": max(horizon_results, key=lambda x: x["absolute_sharpe"])["model_type"],
-                "training date": datetime.now().strftime("%Y-%m-%d"),
             }
 
             target_col = f'target_cls_{h}{interval[1]}'
@@ -535,17 +390,17 @@ class TrainingManager:
         joblib.dump(list(features_data.columns), os.path.join(save_folder, "features.joblib"))
 
     # Run all helper functions and consolidate the best model
-    def run_training_pipeline(self, ticker: str, interval: str) -> bool:
+    def run_training_pipeline(self, ticker: str, interval: str, override_data: pd.DataFrame = None) -> bool:
         # Remove any corrupt model paths (i.e. not all necessary files exist validated before call)
         model_path = os.path.join(MODEL_DIR, f"{ticker}_{interval}")
         if os.path.exists(model_path): shutil.rmtree(model_path)
 
         # Train and build models for ticker
         # Load data and add indicators
-        data = load_data(ticker, interval)
+        data = override_data if override_data is not None else load_data(ticker, interval)
         if data is None: print("No data"); return False
 
-        df = self.calculate_technical_indicators(data, ticker, interval)
+        df = data.ind.add_indicators(ticker, interval)
         if len(df) < 300: print(f"Insufficient data for {ticker} (need 300+, got {len(df)})"); return False
 
         # Get best hyperparameters
@@ -592,7 +447,7 @@ class TrainingManager:
             results[h] = horizon_results
 
         # Save winning model data
-        self._save_model_assets(ticker, interval, results, features_train, train_data, all_hyperparameters)
+        self._save_model_assets(ticker, interval, df.index.max(), results, features_train, train_data, all_hyperparameters)
         return True
 
 ############################################################################
@@ -600,7 +455,6 @@ class TrainingManager:
 # Save prediction to ledger
 def save_prediction(ticker: str, interval: str, current_date: datetime, forecast_results: dict) -> None:
     # Check if that exact prediction has already been saved (note: using same model will always return the same prediction for the same data)
-    if prediction_saved(ticker, interval, current_date): return
     if len(forecast_results) < 1: return
 
     # Iterate through the 3 horizons the model predicted and extract the necessary information
@@ -632,45 +486,40 @@ def save_prediction(ticker: str, interval: str, current_date: datetime, forecast
     else: df_new.to_csv(ledger_file, mode='a', header=False, index=False)
 
 # Load prediction from ledger
-def load_prediction(ticker: str, interval: str, date: datetime) -> dict:
+def load_prediction(ticker: str, interval: str, date: datetime) -> dict | None:
     ledger_file = os.path.join(LEDGER_DIR, f"{ticker}_ledger.csv")
-    ledger = pd.read_csv(ledger_file)
-    date = date.strftime("%Y-%m-%d %H:%M")
+
+    try: ledger = pd.read_csv(ledger_file)
+    except FileNotFoundError: return None
 
     # Filter for the specific data
+    date = date.strftime("%Y-%m-%d %H:%M")
     match = ledger[(ledger['Interval'] == interval) & (ledger['Open_Date'] == date)]
+    if match.empty: return None
     match_dicts = match.reset_index().to_dict(orient='records')
 
     # Rebuild the forecast_results dict
-    forecast_results = {}
-    for i, step in enumerate([1, 2, 4, 8] if "h" in interval else [1, 2, 5, 21]):
-        forecast_results[step] = {
-            "current_price": float(match_dicts[i]['Current_Price']),
-            'price': float(match_dicts[i]['Predicted_Price']),
-            'up': float(match_dicts[i]['Predicted_Max']),
-            'lo': float(match_dicts[i]['Predicted_Min']),
-            'target_date': pd.to_datetime(match_dicts[i]['Target_Date'], format='ISO8601'),
-            'time_difference': int(match_dicts[i]['Horizon'][:-1]),
-            'LSTM_probability': float(match_dicts[i]['LSTM_probability'].replace("%", "")) / 100.0,
-            'LGBM_probability': float(match_dicts[i]['LGBM_probability'].replace("%", "")) / 100.0,
-            'SVC_probability': float(match_dicts[i]['SVC_probability'].replace("%", "")) / 100.0,
-            'LASSO_probability': float(match_dicts[i]['LASSO_probability'].replace("%", "")) / 100.0,
-            'avg_probability': float(match_dicts[i]['Avg_Probability'].replace("%", "")) / 100.0,
-            'dir': match_dicts[i]['Direction'],
-        }
+    try:
+        forecast_results = {}
+        for i, step in enumerate([1, 2, 4, 8] if "h" in interval else [1, 2, 5, 21]):
+            forecast_results[step] = {
+                "current_price": float(match_dicts[i]['Current_Price']),
+                'price': float(match_dicts[i]['Predicted_Price']),
+                'up': float(match_dicts[i]['Predicted_Max']),
+                'lo': float(match_dicts[i]['Predicted_Min']),
+                'target_date': pd.to_datetime(match_dicts[i]['Target_Date'], format='ISO8601'),
+                'time_difference': int(match_dicts[i]['Horizon'][:-1]),
+                'LSTM_probability': float(match_dicts[i]['LSTM_probability'].replace("%", "")) / 100.0,
+                'LGBM_probability': float(match_dicts[i]['LGBM_probability'].replace("%", "")) / 100.0,
+                'SVC_probability': float(match_dicts[i]['SVC_probability'].replace("%", "")) / 100.0,
+                'LASSO_probability': float(match_dicts[i]['LASSO_probability'].replace("%", "")) / 100.0,
+                'avg_probability': float(match_dicts[i]['Avg_Probability'].replace("%", "")) / 100.0,
+                'dir': match_dicts[i]['Direction'],
+            }
+    except Exception:
+        return None
+
     return forecast_results
-
-# Checks if there exists an entry in the ledger for that time
-def prediction_saved(ticker: str, interval: str, date) -> bool:
-    ledger_file = os.path.join(LEDGER_DIR, f"{ticker}_ledger.csv")
-    if not os.path.exists(ledger_file): return False
-
-    ledger = pd.read_csv(ledger_file)
-    ledger['Open_Date'] = pd.to_datetime(ledger['Open_Date'], format='ISO8601')
-
-    # Check if any entry matches current ticker and last trade date
-    match = ledger[(ledger['Interval'] == interval) & (ledger['Open_Date'] == date)]
-    return not match.empty
 
 # Run all helper functions to display a prediction
 def run_prediction_pipeline(ticker: str, interval: str) -> dict:
@@ -683,22 +532,20 @@ def run_prediction_pipeline(ticker: str, interval: str) -> dict:
     last_trade_date = processed_df.index[-1]
 
     # Load or create and save the prediction
-    if not prediction_saved(ticker, interval, last_trade_date):
+    forecast_results = load_prediction(ticker, interval, last_trade_date)
+    if forecast_results is None:
         # Create a dict with basic information about the state of the prediction and stock
         is_hour = "h" in interval
         tech_info = (
             {1:1, 2:2, 4:4, 8:25} if is_hour else {1:1, 2:2, 5:7, 21:28}, # horizons
             "h" if is_hour else "d", # period
             last_trade_date,
-            float(processed_df['Close'].iloc[-1]), # current_price
+            float(processed_df['Adj Close'].iloc[-1]), # current_price
         )
 
         # Generate a prediction
         forecast_results = generate_forecasts(processed_df, assets, tech_info)
         save_prediction(ticker, interval, last_trade_date, forecast_results)
-
-    else:
-        forecast_results = load_prediction(ticker, interval, last_trade_date)
 
     return forecast_results
 
@@ -773,7 +620,7 @@ def prepare_prediction_data(ticker: str, interval: str) -> tuple:
             return None, None
 
     # Load assets
-    processed_df = manager.calculate_technical_indicators(df.copy(), ticker, interval, training=False)
+    processed_df = df.ind.add_indicators(ticker, interval)
     if processed_df.empty:
         # print("Failed to calculate technical indicators.")
         return None, None
