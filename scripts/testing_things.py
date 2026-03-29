@@ -197,11 +197,13 @@ def test_train():
     import os
 
     from scripts.config import MODEL_DIR
-    from scripts.predictor import TrainingManager, all_ticker_models_exist
+    from scripts.predictor import TrainingManager, all_ticker_models_exist, Settings
     from scripts.data_management import load_data
 
-    ticker = "AAPL"
-    interval = "1d"
+    ticker = "ASML"
+    interval = "1h"
+
+    Settings.LOGGING = True
 
     full_data = load_data(ticker, interval)
     cutoff_date = full_data.index.max() - pd.Timedelta(days=(60 if interval == "1d" else 20))
@@ -381,6 +383,6 @@ if __name__ in "__main__":
     # get_special("^TYX")
 
     test_train()
-    test_predict()
+    # test_predict()
 
     pass

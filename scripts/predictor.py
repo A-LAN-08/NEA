@@ -34,10 +34,12 @@ NYSE_CAL = mcal.get_calendar('NYSE')
 # Custom imports
 from scripts.data_management import load_data
 from scripts.config import LEDGER_DIR, MODEL_DIR, DATA_DIR
-import scripts.indicators # Custom pandas dataframe behaviour
+import scripts.indicators # noqa
 
 class Settings:
-    VERBOSE = 0 # Set whether to display logging or not
+    VERBOSE = 0 # Set whether to display model logging or not
+    LOGGING = False # Set whether to display prints for training stages
+    GPU = True # Set whether to use GPU if possible
 
 ############################################################################
 
@@ -215,8 +217,10 @@ class TrainingManager:
         scale_pos_weight = (len(target_train) - target_train.sum()) / target_train.sum()
 
         # Initialize the LightGBM model
-        model = LGBMClassifier(random_state=self.seed, scale_pos_weight=scale_pos_weight, verbose=-1,
-                               device="gpu", gpu_platform_id=0, gpu_device_id=0, **hyperparams)
+        if Settings.GPU:
+            hyperparams.update({"device": "gpu", "gpu_platform_id": 0, "gpu_device_id": 0})
+
+        model = LGBMClassifier(random_state=self.seed, scale_pos_weight=scale_pos_weight, verbose=-1, **hyperparams)
 
         # Walk-Forward Validation
         time_splitter = TimeSeriesSplit(n_splits=3)
@@ -365,11 +369,11 @@ class TrainingManager:
                     down_days = len(y_final) - up_days
                     spw = down_days / up_days if up_days > 0 else 1.0
 
-                    model = LGBMClassifier(
-                        random_state=self.seed, scale_pos_weight=spw, verbose=-1, device="gpu", gpu_platform_id=0, gpu_device_id=0,
-                        **next((hypers["best_params"] for hypers in hyperparameters if hypers["model_type"] == "LGBM"), {})
-                    )
+                    lgbm_hypers = next((hypers["best_params"] for hypers in hyperparameters if hypers["model_type"] == "LGBM"), {})
+                    if Settings.GPU:
+                        lgbm_hypers.update({"device": "gpu", "gpu_platform_id": 0, "gpu_device_id": 0})
 
+                    model = LGBMClassifier(random_state=self.seed, scale_pos_weight=spw, verbose=-1, **lgbm_hypers)
                     model.fit(x_final, y_final)
                     model.booster_.save_model(os.path.join(horizon_folder, f"{model_file}.txt"))
 
@@ -390,23 +394,38 @@ class TrainingManager:
         joblib.dump(list(features_data.columns), os.path.join(save_folder, "features.joblib"))
 
     # Run all helper functions and consolidate the best model
-    def run_training_pipeline(self, ticker: str, interval: str, override_data: pd.DataFrame = None) -> bool:
-        # Remove any corrupt model paths (i.e. not all necessary files exist validated before call)
+    def run_training_pipeline(self, ticker: str, interval: str, override_data: pd.DataFrame = None, status_signal: tuple = None, force_train: bool = False) -> bool:
+        def log_update(msg):
+            if status_signal:
+                # Expect status_signal to be (update_queue, core_key)
+                u_queue, core_key = status_signal
+                u_queue.put((core_key, {"Current Task": msg}))
+            elif Settings.LOGGING:
+                print(msg)
+
         model_path = os.path.join(MODEL_DIR, f"{ticker}_{interval}")
+        if all_ticker_models_exist(model_path, interval) and not force_train:
+            log_update(f"Model {ticker} is already fully trained")
+            return True
+
+        # Remove any corrupt model paths
         if os.path.exists(model_path): shutil.rmtree(model_path)
 
         # Train and build models for ticker
         # Load data and add indicators
+        log_update("Loading data...")
         data = override_data if override_data is not None else load_data(ticker, interval)
         if data is None: print("No data"); return False
 
+        log_update("Adding features...")
         df = data.ind.add_indicators(ticker, interval)
-        if len(df) < 300: print(f"Insufficient data for {ticker} (need 300+, got {len(df)})"); return False
+        if len(df) < 300: print(f"Insufficient data for {ticker} ({interval}) - need 300+, got {len(df)}"); return False
 
         # Get best hyperparameters
         with open(os.path.join(DATA_DIR, "model_hyperparameters.json"), "r") as f:
             all_hyperparameters = json.load(f)
 
+        log_update("Preparing data...")
         # Partition data
         train_size = int(len(df) * (1 - self.__test_size))
         train_data, test_data = df.iloc[:train_size], df.iloc[train_size:]
@@ -423,22 +442,25 @@ class TrainingManager:
         results = {}
 
         for h in ([1,2,4,8] if period == "h" else [1,2,5,21]):
+            log_update(f"Training for horizon {h}...")
             hyperparameters: list = all_hyperparameters[f"{h}{interval[1]}"]
             targets_train, targets_test = train_data[f'target_cls_{h}{period}'], test_data[f'target_cls_{h}{period}']
             actual_returns_test = test_data['return'].values
 
             # Model competition
-            horizon_results = [
-                self._train_lightgbm(next((hypers["best_params"] for hypers in hyperparameters if hypers["model_type"] == "LGBM"), None),
-                                     features_train, targets_train, features_test, targets_test, actual_returns_test),
-                self._train_lasso_regression(next((hypers["best_params"] for hypers in hyperparameters if hypers["model_type"] == "Lasso"), None),
-                                             features_train, targets_train, features_test, targets_test, actual_returns_test),
-                self._train_support_vector(next((hypers["best_params"] for hypers in hyperparameters if hypers["model_type"] == "SVC"), None),
-                                           features_train, targets_train, features_test, targets_test, actual_returns_test),
-                self._train_lstm(next((hypers["best_params"] for hypers in hyperparameters if hypers["model_type"] == "LSTM"), None),
-                                 features_train, targets_train, features_test, targets_test, actual_returns_test)
-            ]
+            log_update(f"Training LightGBM ({h}{period})")
+            lgbm = self._train_lightgbm(next((hypers["best_params"] for hypers in hyperparameters if hypers["model_type"] == "LGBM"), None), features_train, targets_train, features_test, targets_test, actual_returns_test)
 
+            log_update(f"Training Lasso ({h}{period})")
+            lasso = self._train_lasso_regression(next((hypers["best_params"] for hypers in hyperparameters if hypers["model_type"] == "Lasso"), None), features_train, targets_train, features_test, targets_test, actual_returns_test)
+
+            log_update(f"Training SVC ({h}{period})")
+            svc = self._train_support_vector(next((hypers["best_params"] for hypers in hyperparameters if hypers["model_type"] == "SVC"), None), features_train, targets_train, features_test, targets_test, actual_returns_test)
+
+            log_update(f"Training LSTM ({h}{period})")
+            lstm = self._train_lstm(next((hypers["best_params"] for hypers in hyperparameters if hypers["model_type"] == "LSTM"), None), features_train, targets_train, features_test, targets_test, actual_returns_test)
+
+            horizon_results = [lgbm, lasso, svc, lstm]
             for r in horizon_results:
                 # A model is 'Stable' if the test accuracy is close to the walk-forward accuracy
                 stability = abs(r['accuracy'] - r['walk_forward_accuracy'])
@@ -447,6 +469,7 @@ class TrainingManager:
             results[h] = horizon_results
 
         # Save winning model data
+        log_update("Saving assets")
         self._save_model_assets(ticker, interval, df.index.max(), results, features_train, train_data, all_hyperparameters)
         return True
 

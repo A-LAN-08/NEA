@@ -15,6 +15,7 @@ class TechnicalAnalysisAccessor:
 
     def add_indicators(self, ticker: str, interval: str) -> pd.DataFrame:
         df = self._obj
+        df.index = df.index.astype('datetime64[ms]')
 
         # Add all indicators
         df = self._add_sentiment(df, ticker)
@@ -23,6 +24,9 @@ class TechnicalAnalysisAccessor:
         df = self._add_spy(df, interval)
         df = self._add_vix_plus(df, interval)
         df = self._add_macro_context(df, interval)
+
+        # TEMP FILE
+        # df.to_csv("temp_df.csv", index=True)
 
         return df.dropna()
 
@@ -150,17 +154,22 @@ class TechnicalAnalysisAccessor:
         vix_data = pd.read_parquet(os.path.join(DATA_DIR, f'VIX_{interval}.parquet'))
         vix_data.index.name = "Date"
         vix_data.index = pd.to_datetime(vix_data.index, utc=True).tz_localize(None)
+        vix_data.index = vix_data.index.astype('datetime64[ms]')
         vix_data = vix_data[~vix_data.index.duplicated(keep='first')]
 
-        aligned_vix = vix_data.reindex(df.index).ffill().bfill()
+        df = pd.merge_asof(
+            df,
+            vix_data[['Close']].rename(columns={'Close': 'VIX_Level'}),
+            left_index=True,
+            right_index=True,
+            direction='backward'
+        )
 
-        # Raw Fear Level
-        df['VIX_Level'] = aligned_vix['Close']
         # Fear Momentum
-        df['VIX_Change'] = aligned_vix['Close'].pct_change().fillna(0)
+        df['VIX_Change'] = df['VIX_Level'].pct_change().fillna(0)
         # Relative Volatility
-        vix_ma = aligned_vix['Close'].rolling(window=60).mean()
-        df['VIX_Relative'] = (aligned_vix['Close'] / vix_ma).fillna(1.0)
+        vix_ma = df['VIX_Level'].rolling(window=60).mean()
+        df['VIX_Relative'] = (df['VIX_Level'] / vix_ma).fillna(1.0)
 
         return df
 
@@ -208,6 +217,12 @@ class TechnicalAnalysisAccessor:
         tyx_data.index = pd.to_datetime(tyx_data.index, utc=True).tz_localize(None)
         tyx_data = tyx_data[~tyx_data.index.duplicated(keep='first')]
 
-        df['Treasury_30Y'] = tyx_data.reindex(df.index)['Close'].ffill().bfill()
+        df = pd.merge_asof(
+            df,
+            tyx_data[['Close']].rename(columns={'Close': 'Treasury_30Y'}),
+            left_index=True,
+            right_index=True,
+            direction='backward'
+        )
 
         return df

@@ -15,16 +15,11 @@ from yfinance import shared
 from PyQt6.QtCore import QObject, QThread, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QLabel, QProgressBar
 from tqdm import tqdm
-from google.cloud import bigquery
 
 # Custom imports
 from scripts.config import CACHE_DIR, LEDGER_DIR, DATA_DIR, IMG_DIR
 
 NYSE_CAL = mcal.get_calendar('NYSE')
-sent_client = bigquery.Client(
-    project="market-predictor-throwaway",
-    client_options={"quota_project_id": "market-predictor-throwaway"}
-)
 
 ############################################################################
 
@@ -256,6 +251,12 @@ class UpdateWorker(QThread):
 
     @staticmethod
     def sentiment_update():
+        from google.cloud import bigquery
+        sent_client = bigquery.Client(
+            project="market-predictor-throwaway",
+            client_options={"quota_project_id": "market-predictor-throwaway"}
+        )
+
         with open(os.path.join(DATA_DIR, "ticker_map.json"), "r") as f:
             ticker_map = json.load(f)
 
