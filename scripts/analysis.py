@@ -197,6 +197,10 @@ def train_model(ticker):
     core_num = core_queue.get()
     core_key: str = f"Core #{core_num}"
 
+    if core_num in kill_set:
+        update_queue.put((core_key, {"Current ticker/interval": "None", "Current Task": "TERMINATED"}))
+        return  # Exit the function, worker won't take more tasks
+
     from scripts.predictor import TrainingManager, all_ticker_models_exist, Settings
     Settings.GPU = False
     Settings.LOGGING = False
@@ -465,7 +469,7 @@ if __name__ == '__main__':
     # )
 
     run_training(
-        free_cores=4 # How many CPU cores do you want left free
+        free_cores=0 # How many CPU cores do you want left free
     )
 
     # run_predictions(
