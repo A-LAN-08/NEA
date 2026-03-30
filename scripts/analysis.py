@@ -13,7 +13,7 @@ import pandas as pd
 import numpy as np
 import joblib
 import torch # noqa # must be imported here first to initialise DLLS correctly
-from PyQt6.QtWidgets import QApplication, QMainWindow, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QApplication, QMainWindow, QTableWidget, QTableWidgetItem, QPushButton
 from PyQt6.QtCore import QTimer
 
 from scripts.config import DATA_DIR, MODEL_DIR
@@ -27,34 +27,118 @@ warnings.filterwarnings("ignore", message="Your application has authenticated us
 update_queue: Optional[MPQueue] = None
 core_queue: Optional[MPQueue] = None
 failed_tickers_list: list = None
+kill_set: list = None
 
 ############################################################################
 
 class CoreDashboard(QMainWindow):
     timer: QTimer
-    def __init__(self, status_dict, update_queue, result_obj): # noqa
+    def __init__(self, status_dict, update_queue, core_queue, result_obj, kill_set): # noqa
         super().__init__()
         self.status_dict = status_dict
         self.update_queue = update_queue
+        self.core_queue = core_queue
         self.result_obj = result_obj
+        self.kill_set = kill_set
 
         self.setWindowTitle("Model Training Monitor")
         self.resize(800, 400)
 
         # Setup Table
-        self.table = QTableWidget(len(status_dict), 4)
-        self.table.setHorizontalHeaderLabels(["Core #", "Ticker/Interval", "Task", "Completed"])
+        self.table = QTableWidget(len(status_dict) + 1, 6)
+        self.table.setHorizontalHeaderLabels(["Core #", "Ticker/Interval", "Task", "Completed", "Kill buttons", "Resume buttons"])
 
-        layout = QVBoxLayout()
-        layout.addWidget(self.table)
-        container = QWidget()
-        container.setLayout(layout)
-        self.setCentralWidget(container)
+        for i, core_key in enumerate(self.status_dict.keys()):
+            # Extract the ID number from "Core #X"
+            core_id = int(core_key.split("#")[-1])
+
+            # Initialise cells
+            self.table.setItem(i, 0, QTableWidgetItem(core_key))
+            self.table.setItem(i, 1, QTableWidgetItem("None"))
+            self.table.setItem(i, 2, QTableWidgetItem("None"))
+            self.table.setItem(i, 3, QTableWidgetItem("0"))
+
+            # Create stop buttons
+            btn: QPushButton = QPushButton("X")
+            btn.clicked.connect(lambda checked, c_id=core_id: self.stop_specific_core(c_id))
+            self.table.setCellWidget(i, 4, btn)
+
+            # Create resume buttons
+            btn: QPushButton = QPushButton("✔")
+            btn.clicked.connect(lambda checked, c_id=core_id: self.start_specific_core(c_id))
+            btn.setEnabled(False)
+            self.table.setCellWidget(i, 5, btn)
+
+        # Total row
+        self.table.setItem(len(status_dict), 0, QTableWidgetItem("TOTAL"))
+        self.table.setItem(len(status_dict), 1, QTableWidgetItem("-"))
+        self.table.setItem(len(status_dict), 2, QTableWidgetItem("-"))
+        self.table.setItem(len(status_dict), 3, QTableWidgetItem("0"))
+
+        stop_all_btn: QPushButton = QPushButton("X (all)")
+        stop_all_btn.setStyleSheet("font-weight: bold;")
+        stop_all_btn.clicked.connect(self.stop_all_cores)
+        self.table.setCellWidget(len(status_dict), 4, stop_all_btn)
+
+        resume_all_btn: QPushButton = QPushButton("✔ (all)")
+        resume_all_btn.setStyleSheet("font-weight: bold;")
+        resume_all_btn.clicked.connect(self.start_all_cores)
+        self.table.setCellWidget(len(status_dict), 5, resume_all_btn)
+
+        self.setCentralWidget(self.table)
 
         # Timer to refresh UI
         self.timer = QTimer()
         self.timer.timeout.connect(self.refresh_data)
-        self.timer.start(100)  # 10fps
+        self.timer.start(200)  # 5fps
+
+    def start_all_cores(self):
+        # Remove every core ID from the kill set
+        for core_key in self.status_dict.keys():
+            core_id = int(core_key.split("#")[-1])
+            if core_id in self.kill_set: self.kill_set.remove(core_id)
+            if "TERMINATED" in self.status_dict[core_key]["Current Task"]: self.core_queue.put(core_id)
+
+        # Disable/enable all buttons
+        for row in range(0, len(self.status_dict) + 1):
+            self.table.cellWidget(row, 4).setEnabled(True)
+            self.table.cellWidget(row, 5).setEnabled(False)
+
+    def start_specific_core(self, core_id):
+        print(f"Starting core {core_id}")
+        self.kill_set.remove(core_id)
+        self.core_queue.put(core_id)
+
+        for row in range(self.table.rowCount()):
+            if self.table.item(row, 0).text() == f"Core #{core_id}":
+                self.table.cellWidget(row, 4).setEnabled(True)
+                self.table.cellWidget(row, 5).setEnabled(False)
+
+        print("Finished resuming")
+
+    def stop_all_cores(self):
+        print("Stopping all cores")
+        # Add every core ID to the kill set
+        for core_key in self.status_dict.keys():
+            core_id = int(core_key.split("#")[-1])
+            if core_id not in self.kill_set: self.kill_set.append(core_id)
+
+        # Disable all buttons
+        for row in range(self.table.rowCount()):
+            self.table.cellWidget(row, 4).setEnabled(False)
+            self.table.cellWidget(row, 5).setEnabled(True)
+
+        print("Stopped all cores")
+
+    def stop_specific_core(self, core_id):
+        print(f"Stopping core {core_id}")
+        self.kill_set.append(core_id)
+        for row in range(self.table.rowCount()):
+            if self.table.item(row, 0).text() == f"Core #{core_id}":
+                self.table.cellWidget(row, 4).setEnabled(False)
+                self.table.cellWidget(row, 5).setEnabled(True)
+
+        print("Finished killing")
 
     def refresh_data(self):
         while not self.update_queue.empty():
@@ -70,11 +154,15 @@ class CoreDashboard(QMainWindow):
             except:
                 break
 
+        total_completed = 0
         for i, (core_key, info) in enumerate(self.status_dict.items()):
-            self.table.setItem(i, 0, QTableWidgetItem(core_key))
-            self.table.setItem(i, 1, QTableWidgetItem(info["Current ticker/interval"]))
-            self.table.setItem(i, 2, QTableWidgetItem(info["Current Task"]))
-            self.table.setItem(i, 3, QTableWidgetItem(str(info["Amount Completed"])))
+            self.table.item(i, 1).setText(str(info["Current ticker/interval"]))
+            self.table.item(i, 2).setText(str(info["Current Task"]))
+            self.table.item(i, 3).setText(str(info["Amount Completed"]))
+
+            total_completed += info["Amount Completed"]
+
+        self.table.item(len(self.status_dict), 3).setText(str(total_completed))
 
         if self.result_obj.ready():
             self.timer.stop()
@@ -92,23 +180,24 @@ def get_max_cores():
         # Fallback for Windows/Local testing
         return os.cpu_count() or 1
 
-def initialise_worker(q, core_q, f_list):
-    global update_queue, core_queue, failed_tickers_list
+def initialise_worker(q, core_q, f_list, k_set):
+    global update_queue, core_queue, failed_tickers_list, kill_set
     update_queue = q
     core_queue = core_q
     failed_tickers_list = f_list
+    kill_set = k_set
 
     import torch
     if torch.cuda.is_available():
         torch.cuda.init()
 
 def train_model(ticker):
-    global update_queue, core_queue
-    from scripts.predictor import TrainingManager, all_ticker_models_exist, Settings
+    global update_queue, core_queue, failed_tickers_list, kill_set
 
     core_num = core_queue.get()
     core_key: str = f"Core #{core_num}"
 
+    from scripts.predictor import TrainingManager, all_ticker_models_exist, Settings
     Settings.GPU = False
     Settings.LOGGING = False
 
@@ -143,6 +232,10 @@ def train_model(ticker):
         "Current ticker/interval": "None",
         "Current Task": "Waiting..."
     }))
+    if core_num in kill_set:
+        update_queue.put((core_key, {"Current Task": "TERMINATED"}))
+        return  # Exit the function, worker won't take more tasks
+
     core_queue.put(core_num)
 
 def run_training(free_cores):
@@ -157,6 +250,7 @@ def run_training(free_cores):
     from multiprocessing import Manager
     with Manager() as manager:
         shared_failed_list = manager.list()
+        shared_kill_set = manager.list()
         update_queue = Queue()
         core_queue = Queue()
 
@@ -170,18 +264,26 @@ def run_training(free_cores):
             }
 
         app = QApplication(sys.argv)
-        with Pool(processes=num_cores, initializer=initialise_worker, initargs=(update_queue, core_queue, shared_failed_list)) as pool:
-            result = pool.starmap_async(train_model, [(t,) for t in ticker_list])
+        try:
+            with Pool(processes=num_cores, initializer=initialise_worker, initargs=(update_queue, core_queue, shared_failed_list, shared_kill_set)) as pool:
+                result = pool.starmap_async(train_model, [(t,) for t in ticker_list])
 
-            dashboard = CoreDashboard(status_dict, update_queue, result)
-            dashboard.show()
+                dashboard = CoreDashboard(status_dict, update_queue, core_queue, result, shared_kill_set)
+                dashboard.show()
 
-            app.exec()
-            result.get()
+                app.exec()
+                result.get()
 
+        except KeyboardInterrupt:
+            print("\n[!] User interrupted training. Cleaning up...")
+
+        finally:
             final_failed = list(shared_failed_list)
-            print(f"\n--- Training Finished ---")
-            print(f"Failed Tickers: {final_failed}")
+            print(f"\n--- Training Summary ---")
+            if final_failed:
+                print(f"Failed Tickers ({len(final_failed)}): {final_failed}")
+            else:
+                print("No failures recorded.")
 
 ############################################################################
 #
@@ -362,17 +464,9 @@ if __name__ == '__main__':
     #     cache=True,  # Stock cache
     # )
 
-    try:
-        from scripts.predictor import Settings
-        Settings.VERBOSE = 0 # Change to 0 if you don't want logging clogging up console
-        run_training(
-            free_cores=8 # How many CPU cores do you want left free
-        )
-    except KeyboardInterrupt:
-        pass
-    finally:
-        print("\n--- Training Finished or Stopped ---")
-        # print(f"Unsuccessful tickers: {failed_tickers}")
+    run_training(
+        free_cores=4 # How many CPU cores do you want left free
+    )
 
     # run_predictions(
     #     free_cores=4 # How many CPU cores do you want left free
