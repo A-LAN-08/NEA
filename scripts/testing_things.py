@@ -1,6 +1,28 @@
 
 # from edgar import Company, set_identity
 # set_identity("Name email@gmail.com")
+##############################################################################################################
+
+def list_dir():
+    import os
+    import json
+    from scripts.config import MODEL_DIR, DATA_DIR
+
+    with open(os.path.join(DATA_DIR, "ticker_map.json"), "r") as f:
+        ticker_map = json.load(f)
+        ticker_list = set(sorted(list(ticker_map.values()))[::-1])
+
+    trained = {model.split("_")[0] for model in os.listdir(MODEL_DIR) if os.path.isdir(os.path.join(MODEL_DIR, model))}
+    trained_list = sorted(list(trained))
+
+    left = ticker_list - trained
+
+    print(f"LEN TRAINED: {len(trained_list)}")
+    print(f"Head: {trained_list[:10]}")
+    print(f"Tail: {trained_list[-10:]}")
+
+    print(f"Left to train: {left}")
+    print(f"-> {len(left)} left")
 
 ##############################################################################################################
 """ downloading data things """
@@ -382,7 +404,9 @@ if __name__ in "__main__":
     # get_special("^VVIX")
     # get_special("^TYX")
 
-    test_train()
+    # test_train()
     # test_predict()
+
+    list_dir()
 
     pass
