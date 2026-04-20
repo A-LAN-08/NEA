@@ -102,6 +102,7 @@ class TechnicalAnalysisAccessor:
         df['OBV'] = talib.OBV(df['Adj Close'], df['Volume'])
         upper, mid, lower = talib.BBANDS(df['Adj Close'], timeperiod=20)
         df['BBP'] = (df['Adj Close'] - lower) / (upper - lower)
+        df['BBP'] = df['BBP'].replace([np.inf, -np.inf], 0.5)
         df['ROC'] = talib.ROC(df['Close'], timeperiod=10)
 
         # Deviations using all of OHLC

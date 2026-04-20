@@ -40,6 +40,7 @@ class Settings:
     VERBOSE = 0 # Set whether to display model logging or not
     LOGGING = False # Set whether to display prints for training stages
     GPU = True # Set whether to use GPU if possible
+    Threaded = False # Set whether a singular model is being trained on multiple threads
 
 ############################################################################
 
@@ -219,6 +220,8 @@ class TrainingManager:
         # Initialize the LightGBM model
         if Settings.GPU:
             hyperparams.update({"device": "gpu", "gpu_platform_id": 0, "gpu_device_id": 0})
+        if Settings.Threaded:
+            hyperparams.update({"num_threads": 1, "n_jobs": 1})
 
         model = LGBMClassifier(random_state=self.seed, scale_pos_weight=scale_pos_weight, verbose=-1, **hyperparams)
 
@@ -372,6 +375,8 @@ class TrainingManager:
                     lgbm_hypers = next((hypers["best_params"] for hypers in hyperparameters if hypers["model_type"] == "LGBM"), {})
                     if Settings.GPU:
                         lgbm_hypers.update({"device": "gpu", "gpu_platform_id": 0, "gpu_device_id": 0})
+                    if Settings.Threaded:
+                        lgbm_hypers.update({"num_threads": 1, "n_jobs": 1})
 
                     model = LGBMClassifier(random_state=self.seed, scale_pos_weight=spw, verbose=-1, **lgbm_hypers)
                     model.fit(x_final, y_final)

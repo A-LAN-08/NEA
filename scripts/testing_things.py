@@ -6,23 +6,44 @@
 def list_dir():
     import os
     import json
-    from scripts.config import MODEL_DIR, DATA_DIR
+    import pandas as pd
+    from tqdm import tqdm
+    from scripts.config import MODEL_DIR, DATA_DIR, LEDGER_DIR
 
     with open(os.path.join(DATA_DIR, "ticker_map.json"), "r") as f:
         ticker_map = json.load(f)
         ticker_list = set(sorted(list(ticker_map.values()))[::-1])
 
-    trained = {model.split("_")[0] for model in os.listdir(MODEL_DIR) if os.path.isdir(os.path.join(MODEL_DIR, model))}
-    trained_list = sorted(list(trained))
+    # ticker_intervals = set()
+    # for ticker in ticker_list:
+    #     ticker_intervals.add(f"{ticker}_1h")
+    #     ticker_intervals.add(f"{ticker}_1d")
 
-    left = ticker_list - trained
+    # trained_intervals = {model for model in os.listdir(MODEL_DIR) if os.path.isdir(os.path.join(MODEL_DIR, model))}
+    # missing = ticker_intervals - trained_intervals
 
-    print(f"LEN TRAINED: {len(trained_list)}")
-    print(f"Head: {trained_list[:10]}")
-    print(f"Tail: {trained_list[-10:]}")
+    predicted = set()
+    for ledger in tqdm(os.listdir(LEDGER_DIR)):
+        data = pd.read_csv(os.path.join(LEDGER_DIR, ledger))
+        if data.empty or len(data) < 1: continue
+        predicted.add(ledger.split("_")[0])
 
-    print(f"Left to train: {left}")
-    print(f"-> {len(left)} left")
+    missing = ticker_list - predicted
+
+    # trained = {model.split("_")[0] for model in os.listdir(MODEL_DIR) if os.path.isdir(os.path.join(MODEL_DIR, model))}
+    # trained_list = sorted(list(trained))
+
+    # left = ticker_list - trained
+
+    # print(f"LEN TRAINED: {len(trained_list)}")
+    # print(f"Head: {trained_list[:10]}")
+    # print(f"Tail: {trained_list[-10:]}")
+
+    # print(f"Left to train: {left}")
+    # print(f"-> {len(left)} left")
+
+    print(f"Missing: {missing}")
+    print(f"-> {len(missing)}")
 
 ##############################################################################################################
 """ downloading data things """
@@ -105,10 +126,11 @@ def initial_download():
     from config import CACHE_DIR, DATA_DIR
     from data_management import NYSE_CAL
 
-    with open(os.path.join(DATA_DIR, "ticker_map.json"), "r") as f:
-        ticker_map = json.load(f)
+    # with open(os.path.join(DATA_DIR, "ticker_map.json"), "r") as f:
+    #     ticker_map = json.load(f)
+    #     ticker_list = sorted([f for f in ticker_map.values()])
 
-    ticker_list = sorted([f for f in ticker_map.values()])
+    ticker_list = ["CYBR", "JEF", "MMC", "ROST", "RYAAY", "AA", "CYBR", "KIM", "MMC"]
 
     for interval in ["1h", "1d"]:
         for ticker in tqdm(ticker_list, desc=f"Downloading for {interval}"):
@@ -222,18 +244,26 @@ def test_train():
     from scripts.predictor import TrainingManager, all_ticker_models_exist, Settings
     from scripts.data_management import load_data
 
-    ticker = "ASML"
-    interval = "1h"
+    # ticker = "ASML"
+    # interval = "1h"
+
+    ticker_intervals = {'FNB_1d', 'TECH_1d', 'LNG_1d', 'SW_1d', 'ARM_1h', 'FERG_1d', 'MNST_1d', 'BRO_1d', 'FLUT_1d', 'RGLD_1d', 'KGC_1d', 'VSEC_1d', 'RCAT_1d', 'SU_1d'}
 
     Settings.LOGGING = True
 
-    full_data = load_data(ticker, interval)
-    cutoff_date = full_data.index.max() - pd.Timedelta(days=(60 if interval == "1d" else 20))
-    training_data = full_data[full_data.index < cutoff_date]
+    for ticker, interval in [(t.split("_")) for t in ticker_intervals]:
+        # print("Testing", ticker, interval)
+        # try:
+            full_data = load_data(ticker, interval)
+            cutoff_date = full_data.index.max() - pd.Timedelta(days=(60 if interval == "1d" else 20))
+            training_data = full_data[full_data.index < cutoff_date]
 
-    if not all_ticker_models_exist(os.path.join(MODEL_DIR, f"{ticker}_{interval}"), interval):
-        trainer = TrainingManager()
-        trainer.run_training_pipeline(ticker, interval, override_data=training_data)
+            if not all_ticker_models_exist(os.path.join(MODEL_DIR, f"{ticker}_{interval}"), interval):
+                trainer = TrainingManager()
+                trainer.run_training_pipeline(ticker, interval, override_data=training_data)
+
+        # except Exception as e:
+        #     print(f"Error training {ticker} on {interval}:\n--> {type(e).__name__} - {e}")
 
 def test_predict():
     import os
@@ -384,6 +414,66 @@ def test_predict():
 
         save_prediction(ticker, interval, current_time, step_forecasts)
 
+def validate_ledgers():
+    import os
+
+    import pandas as pd
+    from tqdm import tqdm
+
+    from data_management import load_data, is_market_open
+    from scripts.config import LEDGER_DIR
+
+    for ledger in tqdm(os.listdir(LEDGER_DIR)):
+        ledger_path = os.path.join(LEDGER_DIR, ledger)
+        ticker = ledger.split("_")[0]
+
+        # Load ledger and find all entries that are unvalidated
+        ledger = pd.read_csv(ledger_path)
+        NaNs = ledger['Actual_Price'].isna()  # noqa
+        if not NaNs.any(): return
+
+        # Load existing hourly and daily data for the stock
+        ledger['Target_Date'] = pd.to_datetime(ledger['Target_Date'], format='ISO8601')
+        df_h = load_data(ticker, "1h")
+        df_d = load_data(ticker, "1d")
+
+        # Iterate through all rows in ledger and validate
+        updated = False
+        for idx, row in ledger[NaNs].iterrows():
+            target_date = row['Target_Date'] - (pd.Timedelta(hours=1) if row['Interval'] == "1h" else pd.Timedelta(0))
+            df = df_h if row['Interval'] == "1h" else df_d
+
+            if row["Interval"] == "1d":
+                target_date = target_date.normalize()
+
+            # If predicted date has passed, determine correctness of prediction
+            if target_date in df.index:
+                start_price = row["Current_Price"]
+                actual_price = float(df.asof(target_date)['Close'])
+                pred_price = float(row['Predicted_Price'])
+                direction = row['Direction']
+
+                # Check if the prediction is correct
+                direction_correct = (("UP" in direction and actual_price > start_price)
+                                     or ("DOWN" in direction and actual_price < start_price))
+                price_accurate = abs(actual_price - pred_price) / actual_price <= 0.02
+
+                # Update validation fields in the records as integers for pandas datatype consistency
+                ledger.at[idx, 'Actual_Price'] = round(actual_price, 2)
+                ledger.at[idx, 'Is_Correct'] = int(direction_correct and price_accurate)
+                updated = True
+
+            # If predicted date outside market hours set invalid
+            elif not is_market_open(target_date, daily=True):
+                ledger.at[idx, "Actual_Price"] = -1
+                ledger.at[idx, "Is_Correct"] = -1
+                updated = True
+
+        if updated:
+            # Change dates back into strings for pandas datatype consistency
+            ledger['Target_Date'] = ledger['Target_Date'].dt.strftime('%Y-%m-%d %H:%M')
+            ledger.to_csv(ledger_path, index=False)
+
 ##############################################################################################################
 
 if __name__ in "__main__":
@@ -406,7 +496,9 @@ if __name__ in "__main__":
 
     # test_train()
     # test_predict()
+    validate_ledgers()
 
-    list_dir()
+    # list_dir()
+
 
     pass
