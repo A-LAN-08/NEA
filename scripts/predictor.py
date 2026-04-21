@@ -751,30 +751,31 @@ def generate_forecasts(processed_df: pd.DataFrame, assets: tuple, tech_info: tup
                 brain.eval()
 
                 with torch.no_grad():
-                    probs[model_type] = float(brain(torch.from_numpy(x_3d)).item())
+                    probs[model_type] = 1 - float(brain(torch.from_numpy(x_3d)).item())
 
             elif ".txt" in model_filename:
                 model_type = "LGBM"
                 scaled_row = scaler.transform(processed_df[features].iloc[-1:])
                 booster = LGBMBooster(model_file=model_path)
-                probs[model_type] = float(booster.predict(scaled_row)[0])
+                probs[model_type] = 1 - float(booster.predict(scaled_row)[0])
 
             else: # Joblib (Lasso or SVC)
                 scaled_row = scaler.transform(processed_df[features].iloc[-1:])
                 model = joblib.load(model_path)
                 if "SVC" in model_filename:
                     model_type = "SVC"
-                    probs[model_type] = float(model.predict_proba(scaled_row)[0][1])
+                    probs[model_type] = 1 - float(model.predict_proba(scaled_row)[0][1])
                 else:
                     model_type = "Lasso"
-                    probs[model_type] = float(model.predict_proba(scaled_row)[0][1])
+                    probs[model_type] = 1 - float(model.predict_proba(scaled_row)[0][1])
 
             mcc_val = next(m["mcc"] for m in global_meta if m["model_type"] == model_type)
             if mcc_val > 0:
-                ticker_weight = meta.get(f"{model_type}_result", {}).get("absolute_sharpe", 0)
+                ticker_weight = meta.get(str(step), {}).get(f"{model_type}_result", {}).get("absolute_sharpe", 0)
                 global_weight = next(abs(m["sharpe_ratio"]) for m in global_meta if m["model_type"] == model_type)
+                results_weight = next(w for m, w in {"LGBM": 0.4, "SVC": 0.4, "Lasso": 0.1, "LSTM": 0.1}.items() if m == model_type)
 
-                weights[model_type] = (ticker_weight * 0.6) + (global_weight * 0.4)
+                weights[model_type] = (results_weight * 0.5) + (ticker_weight * 0.3) + (global_weight * 0.2)
 
         total_weight = sum(weights.values())
         avg_up_proba = sum(probs[m] * weights[m] for m in probs) / total_weight if total_weight > 0 else 0.5

@@ -338,9 +338,12 @@ def test_predict():
 
             mcc_val = next((m["mcc"] for m in global_meta if m["model_type"] == model_type), 0)
             if mcc_val > 0:
-                ticker_weight = meta.get(f"{model_type}_result", {}).get("absolute_sharpe", 0)
+                ticker_weight = meta.get(str(step), {}).get(f"{model_type}_result", {}).get("absolute_sharpe", 0)
                 global_weight = next((abs(m["sharpe_ratio"]) for m in global_meta if m["model_type"] == model_type), 0)
-                model_registry[step]["weights"][model_type] = (ticker_weight * 0.6) + (global_weight * 0.4)
+                results_weight = next(w for m, w in {"LGBM": 0.4, "SVC": 0.4, "Lasso": 0.1, "LSTM": 0.1}.items() if m == model_type)
+
+                model_registry[step]["weights"][model_type] = (results_weight * 0.5) + (ticker_weight * 0.3) + (global_weight * 0.2)
+
             else:
                 model_registry[step]["weights"][model_type] = 0
 
@@ -485,8 +488,8 @@ if __name__ in "__main__":
 
     # initial_download()
 
-    # import folder_trees
-    # folder_trees.generate_tree("C:/Users/adlan_3zfnjq7/Desktop/Alex - Main/Projects/Stock Market Predictor/models/LH_1h")
+    import folder_trees
+    folder_trees.generate_tree("C:/Users/adlan_3zfnjq7/Desktop/Alex - Main/Projects/LoTi-Log", ignore_paths=[".briefcase"])
 
     # find_missing_files()
 
@@ -496,7 +499,7 @@ if __name__ in "__main__":
 
     # test_train()
     # test_predict()
-    validate_ledgers()
+    # validate_ledgers()
 
     # list_dir()
 
