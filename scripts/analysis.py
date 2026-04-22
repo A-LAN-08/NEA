@@ -15,9 +15,10 @@ import joblib
 import torch # noqa # must be imported here first to initialise DLLS correctly
 from PyQt6.QtWidgets import QApplication, QMainWindow, QTableWidget, QTableWidgetItem, QPushButton
 from PyQt6.QtCore import QTimer
+from sympy.codegen.ast import continue_
 from tqdm import tqdm
 
-from scripts.config import DATA_DIR, MODEL_DIR
+from scripts.config import DATA_DIR, MODEL_DIR, LEDGER_DIR
 from scripts.data_management import load_data, UpdateWorker
 import scripts.indicators  # noqa
 
@@ -315,12 +316,24 @@ def predict_model(ticker, interval):
     try:
         import torch
         from safetensors.torch import load_file
-        from scripts.predictor import LSTMBrain, save_prediction, get_market_dates
+        from scripts.predictor import LSTMBrain, save_prediction, get_market_dates, all_ticker_models_exist
         from lightgbm import Booster as LGBMBooster
 
         ##### SETUP
         full_data = load_data(ticker, interval)
         model_folder = os.path.join(MODEL_DIR, f"{ticker}_{interval}")
+
+        if not all_ticker_models_exist(model_folder, interval):
+            return
+
+        try:
+            ledger = pd.read_csv(os.path.join(LEDGER_DIR, f"{ticker}_ledger.csv"))
+            if ledger.empty or len(ledger) < 1: pass
+            else: raise Exception
+        except FileNotFoundError:
+            pass
+        except Exception:
+            raise Exception
 
         with open(os.path.join(model_folder, 'metadata.json'), 'r') as f:
             meta = json.load(f)
@@ -408,15 +421,15 @@ def predict_model(ticker, interval):
                         x_3d = np.expand_dims(scaled_seq, axis=0).astype(np.float32)
 
                         with torch.no_grad():
-                            probs[model_type] = float(model_obj(torch.from_numpy(x_3d).to(device)).item())
+                            probs[model_type] = 1 - float(model_obj(torch.from_numpy(x_3d).to(device)).item())
 
                     elif model_type == "LGBM":
                         scaled_row = scaler.transform(processed_df[features].iloc[-1:])
-                        probs[model_type] = float(model_obj.predict(scaled_row)[0])
+                        probs[model_type] = 1 - float(model_obj.predict(scaled_row)[0])
 
                     else:  # Lasso / SVC
                         scaled_row = scaler.transform(processed_df[features].iloc[-1:])
-                        probs[model_type] = float(model_obj.predict_proba(scaled_row)[0][1])
+                        probs[model_type] = 1 - float(model_obj.predict_proba(scaled_row)[0][1])
 
                 weights = bundle["weights"]
                 total_weight = sum(weights.values())
@@ -474,11 +487,11 @@ def run_predictions(free_cores: int = 0):
     num_cores = max(1, get_max_cores() - free_cores)
     print(f"-> Using {num_cores} CPU cores...")
 
-    # with open(os.path.join(DATA_DIR, "ticker_map.json"), "r") as f:
-    #     ticker_map = json.load(f)
-    #     ticker_list = sorted(list(ticker_map.values()))[::-1]
+    with open(os.path.join(DATA_DIR, "ticker_map.json"), "r") as f:
+        ticker_map = json.load(f)
+        ticker_list = sorted(list(ticker_map.values()))[::-1]
 
-    ticker_list = sorted(list({'GPC', 'EXPD', 'HUM', 'MMC', 'FRPT', 'SN', 'NLY', 'LASR', 'CYBR', 'WEC'}))
+    # ticker_list = sorted(list({'MMC', 'FRPT', 'WEC', 'LASR', 'HUM', 'SN', 'NLY', 'TAP', 'EXPD', 'T', 'GPC', 'CYBR'}))
 
     tasks = []
     for ticker in ticker_list:
@@ -528,6 +541,13 @@ def updates(sent, spy, cache):
 ############################################################################
 
 if __name__ == '__main__':
+
+    import psutil
+    import os
+
+    p = psutil.Process(os.getpid())
+    p.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
+
     # import time_machine
     # target_time = datetime(2026, 3, 13, 12, 0, 0, tzinfo=timezone.utc)
     # with time_machine.travel(target_time):
@@ -545,7 +565,7 @@ if __name__ == '__main__':
     # )
 
     run_predictions(
-        free_cores=4 # How many CPU cores do you want left free
+        free_cores=6 # How many CPU cores do you want left free
     )
 
 

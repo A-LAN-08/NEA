@@ -99,7 +99,7 @@ def show_results(df: pd.DataFrame) -> None:
             # plt.tight_layout(rect=[0, 0.03, 1, 0.95])
             # plt.show()
 
-            plot_calibration_curve(h_df, col, h)
+            # plot_calibration_curve(h_df, col, h)
             # close_analysis(h_df, h, correct_column)
 
 

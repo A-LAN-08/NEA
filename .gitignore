@@ -7,7 +7,7 @@
 # Local storage
 cache_files/
 models/
-ledgers/
+ledgers*/
 .bin/
 
 # UV and others

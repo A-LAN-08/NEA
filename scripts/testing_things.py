@@ -1,8 +1,9 @@
-
+""""""
 # from edgar import Company, set_identity
 # set_identity("Name email@gmail.com")
-##############################################################################################################
 
+##############################################################################################################
+""" dir things """
 def list_dir():
     import os
     import json
@@ -44,6 +45,48 @@ def list_dir():
 
     print(f"Missing: {missing}")
     print(f"-> {len(missing)}")
+
+def remove_ticker_info():
+    import os
+    import shutil
+    from tqdm import tqdm
+
+    from config import MODEL_DIR, CACHE_DIR
+
+    tickers = {'MMC', 'FRPT', 'WEC', 'LASR', 'HUM', 'SN', 'NLY', 'TAP', 'EXPD', 'T', 'GPC', 'CYBR'}
+    for ticker in tqdm(tickers):
+        try: shutil.rmtree(os.path.join(MODEL_DIR, f"{ticker}_1h"))
+        except: pass
+        try: shutil.rmtree(os.path.join(MODEL_DIR, f"{ticker}_1d"))
+        except: pass
+
+        # try: os.remove(os.path.join(CACHE_DIR, f"{ticker}_1h.csv"))
+        # except: pass
+        # try: os.remove(os.path.join(CACHE_DIR, f"{ticker}_1d.csv"))
+        # except: pass
+
+def check_model_corruption():
+    import os
+    import json
+
+    from tqdm import tqdm
+
+    from scripts.predictor import all_ticker_models_exist
+    from scripts.config import DATA_DIR, MODEL_DIR
+
+    with open(os.path.join(DATA_DIR, "ticker_map.json"), "r") as f:
+        ticker_map = json.load(f)
+        ticker_list = sorted(list(ticker_map.values()))[::-1]
+
+    corrupt = []
+    for ticker in tqdm(ticker_list):
+        if not all_ticker_models_exist(os.path.join(MODEL_DIR, f"{ticker}_1h"), "1h"):
+            corrupt.append((ticker, "1h"))
+
+        if not all_ticker_models_exist(os.path.join(MODEL_DIR, f"{ticker}_1d"), "1d"):
+            corrupt.append((ticker, "1d"))
+
+    print(corrupt)
 
 ##############################################################################################################
 """ downloading data things """
@@ -235,7 +278,7 @@ def get_special(key):
         data.to_parquet(os.path.join(DATA_DIR, f"{key}_{interval}.parquet"))
 
 ##############################################################################################################
-"""testing pipeline"""
+""" testing pipeline """
 def test_train():
     import pandas as pd
     import os
@@ -417,6 +460,8 @@ def test_predict():
 
         save_prediction(ticker, interval, current_time, step_forecasts)
 
+##############################################################################################################
+
 def validate_ledgers():
     import os
 
@@ -426,7 +471,7 @@ def validate_ledgers():
     from data_management import load_data, is_market_open
     from scripts.config import LEDGER_DIR
 
-    for ledger in tqdm(os.listdir(LEDGER_DIR)):
+    for ledger in tqdm(os.listdir(LEDGER_DIR), desc="Validating ledgers", unit="ledger"):
         ledger_path = os.path.join(LEDGER_DIR, ledger)
         ticker = ledger.split("_")[0]
 
@@ -488,10 +533,11 @@ if __name__ in "__main__":
 
     # initial_download()
 
-    import folder_trees
-    folder_trees.generate_tree("C:/Users/adlan_3zfnjq7/Desktop/Alex - Main/Projects/LoTi-Log", ignore_paths=[".briefcase"])
+    # import folder_trees
+    # folder_trees.generate_tree("C:/Users/adlan_3zfnjq7/Desktop/Alex - Main/Projects/LoTi-Log", ignore_paths=[".briefcase"])
 
     # find_missing_files()
+    # remove_ticker_info()
 
     # get_special("^VIX")
     # get_special("^VVIX")
@@ -499,9 +545,10 @@ if __name__ in "__main__":
 
     # test_train()
     # test_predict()
-    # validate_ledgers()
+    validate_ledgers()
 
     # list_dir()
+    # check_model_corruption()
 
 
     pass
