@@ -480,8 +480,14 @@ class TrainingManager:
 
 ############################################################################
 
+
+"""                 """
+""" OUTDATED BELOW: """
+"""                 """
+
+
 # Save prediction to ledger
-def save_prediction(ticker: str, interval: str, current_date: datetime, forecast_results: dict) -> None:
+def save_prediction(ticker: str, interval: str, forecast_results: dict) -> None:
     # Check if that exact prediction has already been saved (note: using same model will always return the same prediction for the same data)
     if len(forecast_results) < 1: return
 
@@ -491,21 +497,19 @@ def save_prediction(ticker: str, interval: str, current_date: datetime, forecast
     for step, data in forecast_results.items():
         new_entries.append({
             "Interval": interval,
-            'Open_Date': current_date.strftime("%Y-%m-%d %H:%M"),
-            'Target_Date': data['target_date'].strftime('%Y-%m-%d %H:%M'),
             'Horizon': f"{data['time_difference']}{interval[1]}",
-            "Current_Price": round(data['current_price'], 2),
-            'Predicted_Price': round(data['price'], 2),
-            'Predicted_Max': round(data['up'], 2),
-            'Predicted_Min': round(data['lo'], 2),
-            'LSTM_probability': f"{data['LSTM_probability']:.1%}",
-            'LGBM_probability': f"{data['LGBM_probability']:.1%}",
-            'SVC_probability': f"{data['SVC_probability']:.1%}",
-            'LASSO_probability': f"{data['LASSO_probability']:.1%}",
-            'Avg_Probability': f"{data['avg_probability']:.1%}",
-            'Direction': data['dir'],
+            'Open_Date': data["Date_Predicted"],
+            'Target_Date': data['Target_Date'].strftime('%Y-%m-%d %H:%M'),
+            "Current_Price": round(data['Current_Price'], 2),
+            'Predicted_Price': round(data['Predicted_Price'], 2),
             'Actual_Price': np.nan,
-            'Is_Correct': np.nan
+            'Predicted_Max_Price': round(data['up'], 2),
+            'Predicted_Min_Price': round(data['lo'], 2),
+            'LSTM_signal': f"{data['LSTM_signal']:.3f}",
+            'LGBM_signal': f"{data['LGBM_signal']:.3f}",
+            'SVC_signal': f"{data['SVC_signal']:.3f}",
+            'LASSO_signal': f"{data['LASSO_signal']:.3f}",
+            'AVG_signal': f"{data['AVG_signal']:.3f}",
         })
 
     # Add prediction data to the ledger
@@ -517,7 +521,9 @@ def save_prediction(ticker: str, interval: str, current_date: datetime, forecast
 def load_prediction(ticker: str, interval: str, date: datetime) -> dict | None:
     ledger_file = os.path.join(LEDGER_DIR, f"{ticker}_ledger.csv")
 
-    try: ledger = pd.read_csv(ledger_file)
+    try:
+        ledger = pd.read_csv(ledger_file)
+        if ledger.empty or len(ledger) < 1: return None
     except FileNotFoundError: return None
 
     # Filter for the specific data
@@ -531,23 +537,34 @@ def load_prediction(ticker: str, interval: str, date: datetime) -> dict | None:
         forecast_results = {}
         for i, step in enumerate([1, 2, 4, 8] if "h" in interval else [1, 2, 5, 21]):
             forecast_results[step] = {
-                "current_price": float(match_dicts[i]['Current_Price']),
-                'price': float(match_dicts[i]['Predicted_Price']),
-                'up': float(match_dicts[i]['Predicted_Max']),
-                'lo': float(match_dicts[i]['Predicted_Min']),
-                'target_date': pd.to_datetime(match_dicts[i]['Target_Date'], format='ISO8601'),
+                "Date_Predicted": pd.to_datetime(match_dicts[i]['Open_Date'], format="ISO8601"),
+                'Target_Date': pd.to_datetime(match_dicts[i]['Target_Date'], format='ISO8601'),
+                "Current_Price": float(match_dicts[i]['Current_Price']),
+                'Predicted_Price': float(match_dicts[i]['Predicted_Price']),
+                'up': float(match_dicts[i]['Predicted_Max_Price']),
+                'lo': float(match_dicts[i]['Predicted_Min_Price']),
                 'time_difference': int(match_dicts[i]['Horizon'][:-1]),
-                'LSTM_probability': float(match_dicts[i]['LSTM_probability'].replace("%", "")) / 100.0,
-                'LGBM_probability': float(match_dicts[i]['LGBM_probability'].replace("%", "")) / 100.0,
-                'SVC_probability': float(match_dicts[i]['SVC_probability'].replace("%", "")) / 100.0,
-                'LASSO_probability': float(match_dicts[i]['LASSO_probability'].replace("%", "")) / 100.0,
-                'avg_probability': float(match_dicts[i]['Avg_Probability'].replace("%", "")) / 100.0,
-                'dir': match_dicts[i]['Direction'],
+                'LSTM_signal': float(match_dicts[i]['LSTM_signal']),
+                'LGBM_signal': float(match_dicts[i]['LGBM_signal']),
+                'SVC_signal': float(match_dicts[i]['SVC_signal']),
+                'LASSO_signal': float(match_dicts[i]['LASSO_signal']),
+                'AVG_signal': float(match_dicts[i]['AVG_signal']),
             }
-    except Exception:
-        return None
+    except Exception: return None
 
     return forecast_results
+
+# Checks if there exists an entry in the ledger for those details
+def prediction_saved(ticker: str, interval: str, date: datetime, horizons: list[str]) -> bool:
+    ledger_file = os.path.join(LEDGER_DIR, f"{ticker}_ledger.csv")
+    if not os.path.exists(ledger_file): return False
+
+    ledger = pd.read_csv(ledger_file)
+    ledger['Open_Date'] = pd.to_datetime(ledger['Open_Date'], format='ISO8601')
+
+    # Check if any entry matches current ticker and last trade date
+    match = ledger[(ledger['Interval'] == interval) & (ledger['Open_Date'] == date) & (ledger["Horizon"].isin(horizons))]
+    return not match.empty
 
 # Run all helper functions to display a prediction
 def run_prediction_pipeline(ticker: str, interval: str) -> dict:
@@ -573,7 +590,7 @@ def run_prediction_pipeline(ticker: str, interval: str) -> dict:
 
         # Generate a prediction
         forecast_results = generate_forecasts(processed_df, assets, tech_info)
-        save_prediction(ticker, interval, last_trade_date, forecast_results)
+        save_prediction(ticker, interval, forecast_results)
 
     return forecast_results
 
@@ -780,31 +797,27 @@ def generate_forecasts(processed_df: pd.DataFrame, assets: tuple, tech_info: tup
         total_weight = sum(weights.values())
         avg_up_proba = sum(probs[m] * weights[m] for m in probs) / total_weight if total_weight > 0 else 0.5
 
-        # Calculate whether it will go up or down
-        adjusted_probability = max(avg_up_proba, 1 - avg_up_proba)
-        direction = "UP ▲" if avg_up_proba > 0.5 else "DOWN ▼"
-
         # Calculate predicted price
         direction_multiplier = 1 if avg_up_proba > 0.5 else -1
-        confidence_strength = 2 * (adjusted_probability - 0.5)
+        confidence_strength = 2 * (max(avg_up_proba, 1 - avg_up_proba) - 0.5)
         expected_move_magnitude = current_volatility_atr * np.sqrt(step)
 
         predicted_price = current_price + (direction_multiplier * expected_move_magnitude * confidence_strength)
         capped_width = min(expected_move_magnitude * (1.0 + confidence_strength), current_price * 0.15)
 
         forecast_results[step] = {
-            "current_price": current_price,
-            'price': predicted_price,
+            "Date_Predicted": last_trade_date.strftime("%Y-%m-%d %H:%M"),
+            'Target_Date': target_dates[step],
+            "Current_Price": current_price,
+            'Predicted_Price': predicted_price,
             'up': predicted_price + capped_width,
             'lo': predicted_price - capped_width,
-            'target_date': target_dates[step],
             'time_difference': actual_time,
-            'avg_probability': adjusted_probability,
-            'dir': direction,
-            'LSTM_probability': probs["LSTM"],
-            'LGBM_probability': probs["LGBM"],
-            'SVC_probability': probs["SVC"],
-            'LASSO_probability': probs["Lasso"],
+            'LSTM_signal': probs["LSTM"],
+            'LGBM_signal': probs["LGBM"],
+            'SVC_signal': probs["SVC"],
+            'LASSO_signal': probs["Lasso"],
+            'AVG_signal': avg_up_proba,
         }
 
     return forecast_results

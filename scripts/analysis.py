@@ -1,6 +1,6 @@
 
 import time
-import os
+import os # noqa (it is used idk why pycharm says it isn't)
 import sys
 import json
 from multiprocessing import Manager, Queue, Pool
@@ -15,7 +15,7 @@ import joblib
 import torch # noqa # must be imported here first to initialise DLLS correctly
 from PyQt6.QtWidgets import QApplication, QMainWindow, QTableWidget, QTableWidgetItem, QPushButton
 from PyQt6.QtCore import QTimer
-from sympy.codegen.ast import continue_
+from sympy.codegen.ast import continue_ # noqa (says unused ngl don't remmeber if i use it)
 from tqdm import tqdm
 
 from scripts.config import DATA_DIR, MODEL_DIR, LEDGER_DIR
@@ -26,6 +26,8 @@ logger = logging.getLogger('yfinance')
 logger.setLevel(logging.CRITICAL)
 warnings.filterwarnings("ignore", message="Your application has authenticated using end user credentials")
 
+class DetailedException(Exception): pass
+
 # For training threads
 update_queue: Optional[MPQueue] = None
 core_queue: Optional[MPQueue] = None
@@ -33,8 +35,8 @@ failed_tickers_list: list = None
 kill_set: list = None
 
 # For prediction threads
-predict_update_queue: Optional[MPQueue] = None
-predict_failed_list: list = None
+predict_tasks: dict = None
+predict_fails: list = None
 
 ############################################################################
 
@@ -312,36 +314,28 @@ def run_training(free_cores: int = 0):
 ############################################################################
 
 def predict_model(ticker, interval):
-    global predict_update_queue, predict_failed_list
+    global predict_tasks, predict_fails
+    task_key = f"{ticker}_{interval}"
+    predict_tasks[task_key] = time.perf_counter()
     try:
         import torch
         from safetensors.torch import load_file
-        from scripts.predictor import LSTMBrain, save_prediction, get_market_dates, all_ticker_models_exist
+        from scripts.predictor import LSTMBrain, save_prediction, get_market_dates, all_ticker_models_exist, prediction_saved
         from lightgbm import Booster as LGBMBooster
 
-        ##### SETUP
+        ## -----  SETUP  ----- ##
         full_data = load_data(ticker, interval)
         model_folder = os.path.join(MODEL_DIR, f"{ticker}_{interval}")
 
         if not all_ticker_models_exist(model_folder, interval):
-            return
-
-        try:
-            ledger = pd.read_csv(os.path.join(LEDGER_DIR, f"{ticker}_ledger.csv"))
-            if ledger.empty or len(ledger) < 1: pass
-            else: raise Exception
-        except FileNotFoundError:
-            pass
-        except Exception:
-            raise Exception
+            raise Exception("Not all ticker models exist.")
 
         with open(os.path.join(model_folder, 'metadata.json'), 'r') as f:
             meta = json.load(f)
         with open(os.path.join(DATA_DIR, "model_hyperparameters.json"), 'r') as f:
             hyper_meta = json.load(f)
 
-        ##### AI BRAINS
-
+        ## -----  AI BRAINS  ----- ##
         scaler = joblib.load(f"{model_folder}/scaler.joblib")
         features = joblib.load(f"{model_folder}/features.joblib")
 
@@ -350,7 +344,7 @@ def predict_model(ticker, interval):
         horizons = {1:1, 2:2, 4:4, 8:25} if "h" in interval else {1:1, 2:2, 5:7, 21:28}
         period = "h" if interval == "1h" else "d"
 
-        for step in horizons.keys():
+        for step in horizons:
             horizon_folder = os.path.join(model_folder, f"{step}_horizon_models")
             if not os.path.exists(horizon_folder): continue
 
@@ -361,48 +355,64 @@ def predict_model(ticker, interval):
                 model_path = os.path.join(horizon_folder, model_filename)
 
                 # Identify model type
-                if ".safetensors" in model_filename:
-                    model_type = "LSTM"
-                    params = next(m["best_params"] for m in global_meta if m["model_type"] == model_type)
-                    # Initialize brain once
-                    brain = LSTMBrain(
-                        input_dim=len(features),
-                        hidden_dim=params["module__hidden_dim"],
-                        layers=params["module__layers"],
-                        dropout=params["module__dropout"],
+                try:
+                    if ".safetensors" in model_filename:
+                        model_type = "LSTM"
+                        params = next(m["best_params"] for m in global_meta if m["model_type"] == model_type)
+                        # Initialize brain once
+                        brain = LSTMBrain(
+                            input_dim=len(features),
+                            hidden_dim=params["module__hidden_dim"],
+                            layers=params["module__layers"],
+                            dropout=params["module__dropout"],
+                        )
+                        brain.load_state_dict(load_file(model_path))
+                        brain.to(device).eval()
+                        model_registry[step]["models"][model_type] = brain
+
+                    elif ".txt" in model_filename:
+                        model_type = "LGBM"
+                        model_registry[step]["models"][model_type] = LGBMBooster(model_file=model_path)
+
+                    else:
+                        model_type = "SVC" if "SVC" in model_filename else "LASSO"
+                        model_registry[step]["models"][model_type] = joblib.load(model_path)
+
+                except Exception as e:
+                    raise DetailedException(
+                        f"\n[CORRUPT MODEL] {ticker} ({interval}) | Horizon: {step}{period} | File: {model_filename}\n"
+                        f"-->{type(e).__name__} - {e}"
                     )
-                    brain.load_state_dict(load_file(model_path))
-                    brain.to(device).eval()
-                    model_registry[step]["models"][model_type] = brain
 
-                elif ".txt" in model_filename:
-                    model_type = "LGBM"
-                    model_registry[step]["models"][model_type] = LGBMBooster(model_file=model_path)
-
-                else:
-                    model_type = "SVC" if "SVC" in model_filename else "Lasso"
-                    model_registry[step]["models"][model_type] = joblib.load(model_path)
-
-                mcc_val = next((m["mcc"] for m in global_meta if m["model_type"] == model_type), 0)
-                if mcc_val > 0:
-                    ticker_weight = meta.get(str(step), {}).get(f"{model_type}_result", {}).get("absolute_sharpe", 0)
-                    global_weight = next((abs(m["sharpe_ratio"]) for m in global_meta if m["model_type"] == model_type), 0)
-                    results_weight = next(w for m, w in {"LGBM": 0.4, "SVC": 0.4, "Lasso": 0.1, "LSTM": 0.1}.items() if m == model_type)
-
-                    model_registry[step]["weights"][model_type] = (results_weight * 0.5) + (ticker_weight * 0.3) + (global_weight * 0.2)
-
-                else:
-                    model_registry[step]["weights"][model_type] = 0
-
-        ##### Walk forward predictions
-
+        ## -----  Walk forward predictions  ----- ##
         last_train_date = pd.to_datetime(meta["training data end"])
         test_data = full_data[full_data.index > last_train_date]
 
         history = full_data[full_data.index <= last_train_date].tail(400).copy()
         processed_df = history.ind.add_indicators(ticker, interval)
 
+        ledger_file = os.path.join(LEDGER_DIR, f"{ticker}_ledger.csv")
+        ledger = None
+        if os.path.exists(ledger_file):
+            ledger: pd.DataFrame = pd.read_csv(ledger_file)
+            ledger['Open_Date'] = pd.to_datetime(ledger['Open_Date'], format='ISO8601')
+
+        weights = {
+            "1h": {"LSTM": 0.35, "LGBM": 0.25, "LASSO": 0.25, "SVC": -0.15},
+            "25h": {"SVC": 0.4, "LASSO": 0.2, "LGBM": 0.2, "LSTM": 0.2},
+            "1d": {"SVC": -0.5, "LSTM": 0.2, "LGBM": 0.2, "LASSO": 0.1},
+            "2d": {"SVC": -0.7, "LGBM": 0.1, "LASSO": 0.1, "LSTM": -0.1},
+            "28d": {"SVC": 0.5, "LGBM": 0.3, "LASSO": -0.1, "LSTM": -0.1},
+            "default": {"LSTM": 0.3, "LGBM": 0.3, "SVC": 0.2, "LASSO": 0.2}
+        }
+
         for current_time in test_data.index:
+            if ledger is not None:
+                # Check if any entry matches current ticker and last trade date
+                match: pd.DataFrame = ledger[(ledger['Interval'] == interval) & (ledger['Open_Date'] == current_time) &
+                                             (ledger["Horizon"].isin([f"{horizon}{period}" for horizon in horizons]))] # noqa
+                if not match.empty: continue
+
             current_price = processed_df['Adj Close'].iloc[-1]
             current_volatility_atr = float(processed_df['ATR'].iloc[-1])
 
@@ -413,7 +423,7 @@ def predict_model(ticker, interval):
             for step, bundle in model_registry.items():
                 if target_dates[step] is None: continue
 
-                probs = {}
+                signals = {}
                 for model_type, model_obj in bundle["models"].items():
                     if model_type == "LSTM":
                         recent_data = processed_df[features].tail(14)
@@ -421,67 +431,63 @@ def predict_model(ticker, interval):
                         x_3d = np.expand_dims(scaled_seq, axis=0).astype(np.float32)
 
                         with torch.no_grad():
-                            probs[model_type] = 1 - float(model_obj(torch.from_numpy(x_3d).to(device)).item())
+                            signals[model_type] = (float(model_obj(torch.from_numpy(x_3d).to(device)).item()) - 0.5) * 2
 
                     elif model_type == "LGBM":
                         scaled_row = scaler.transform(processed_df[features].iloc[-1:])
-                        probs[model_type] = 1 - float(model_obj.predict(scaled_row)[0])
+                        signals[model_type] = (float(model_obj.predict(scaled_row)[0]) - 0.5) * 2
 
                     else:  # Lasso / SVC
                         scaled_row = scaler.transform(processed_df[features].iloc[-1:])
-                        probs[model_type] = 1 - float(model_obj.predict_proba(scaled_row)[0][1])
+                        signals[model_type] = (float(model_obj.predict_proba(scaled_row)[0][1]) - 0.5) * 2
 
-                weights = bundle["weights"]
-                total_weight = sum(weights.values())
-                avg_up_proba = sum(probs[m] * weights[m] for m in probs) / total_weight if total_weight > 0 else 0.5
-
-                # Calculate whether it will go up or down
-                adjusted_probability = max(avg_up_proba, 1 - avg_up_proba)
-                direction = "UP ▲" if avg_up_proba > 0.5 else "DOWN ▼"
-
+                # Average prediction
+                horizon_weights = weights.get(f"{horizons[step]}{period}", {"LSTM": 0.3, "LGBM": 0.3, "SVC": 0.2, "LASSO": 0.2})
+                avg_signal = sum(horizon_weights[key] * signals[key] for key in horizon_weights.keys())
+                
                 # Calculate predicted price
-                direction_multiplier = 1 if avg_up_proba > 0.5 else -1
-                confidence_strength = 2 * (adjusted_probability - 0.5)
                 expected_move_magnitude = current_volatility_atr * np.sqrt(step)
-
-                predicted_price = current_price + (direction_multiplier * expected_move_magnitude * confidence_strength)
-                capped_width = min(expected_move_magnitude * (1.0 + confidence_strength), current_price * 0.15)
+                predicted_price = current_price + (2 * avg_signal * expected_move_magnitude)
+                capped_width = min(expected_move_magnitude * abs(avg_signal / 2), current_price * 0.1)
 
                 step_forecasts[step] = {
-                    "current_price": current_price,
-                    'price': predicted_price,
+                    "Date_Predicted": current_time.strftime("%Y-%m-%d %H:%M"),
+                    'Target_Date': target_dates[step],
+                    "Current_Price": current_price,
+                    'Predicted_Price': predicted_price,
                     'up': predicted_price + capped_width,
                     'lo': predicted_price - capped_width,
-                    'target_date': target_dates[step],
                     'time_difference': horizons[step],
-                    'avg_probability': adjusted_probability,
-                    'dir': direction,
-                    'LSTM_probability': probs["LSTM"],
-                    'LGBM_probability': probs["LGBM"],
-                    'SVC_probability': probs["SVC"],
-                    'LASSO_probability': probs["Lasso"],
+                    'LSTM_signal': signals["LSTM"],
+                    'LGBM_signal': signals["LGBM"],
+                    'SVC_signal': signals["SVC"],
+                    'LASSO_signal': signals["LASSO"],
+                    'AVG_signal': avg_signal,
+
                 }
 
-            save_prediction(ticker, interval, current_time, step_forecasts)
+            save_prediction(ticker, interval, step_forecasts)
 
-    except Exception:
-        if predict_failed_list is not None:
-            predict_failed_list.append(f"{ticker}_{interval}")
+    except Exception as e:
+        if isinstance(e, DetailedException): print(e)
+        else: print(f"\nERROR on {ticker} ({interval})\n--->{type(e).__name__}: {e}")
+
+        if predict_fails is not None:
+            predict_fails.append(task_key)
     finally:
-        if predict_update_queue:
-            predict_update_queue.put(ticker)  # Signal completion
+        predict_tasks[task_key] = -1
 
 def initialise_predict_worker(u_q, f_l):
-    global predict_update_queue, predict_failed_list
-    predict_update_queue = u_q
-    predict_failed_list = f_l
+    global predict_tasks, predict_fails
+    predict_tasks = u_q
+    predict_fails = f_l
 
     import torch
     if torch.cuda.is_available():
         torch.cuda.init()
 
 def run_predictions(free_cores: int = 0):
-    global predict_update_queue, predict_failed_list
+    global predict_tasks, predict_fails
 
     print("\n--- Predicting Stocks ---")
     num_cores = max(1, get_max_cores() - free_cores)
@@ -491,36 +497,48 @@ def run_predictions(free_cores: int = 0):
         ticker_map = json.load(f)
         ticker_list = sorted(list(ticker_map.values()))[::-1]
 
-    # ticker_list = sorted(list({'MMC', 'FRPT', 'WEC', 'LASR', 'HUM', 'SN', 'NLY', 'TAP', 'EXPD', 'T', 'GPC', 'CYBR'}))
-
     tasks = []
     for ticker in ticker_list:
         for interval in ["1h", "1d"]:
             tasks.append((ticker, interval))
 
     with Manager() as manager:
-        predict_update_queue = manager.Queue()
-        predict_failed_list = manager.list()
+        predict_tasks = manager.dict()
+        predict_fails = manager.list()
 
-        with Pool(processes=num_cores, initializer=initialise_predict_worker, initargs=(predict_update_queue, predict_failed_list)) as pool:
+        try:
+            with Pool(processes=num_cores, initializer=initialise_predict_worker, initargs=(predict_tasks, predict_fails)) as pool:
 
-            result = pool.starmap_async(predict_model, tasks)
+                result = pool.starmap_async(predict_model, tasks)
 
-            pbar = tqdm(total=len(tasks), desc="Filling ledgers", unit="task", colour="cyan")
+                pbar = tqdm(total=len(tasks), desc="Filling ledgers", unit="task", colour="cyan")
 
-            completed_count = 0
-            while not result.ready():
-                # Check for updates from workers
-                while not predict_update_queue.empty():
-                    predict_update_queue.get()
-                    pbar.update(1)
-                    completed_count += 1
-                time.sleep(0.1)  # Don't hammer the CPU
+                while not result.ready():
+                    # Check for updates from workers
+                    current_statuses = dict(predict_tasks)
+                    for task_name, status in current_statuses.items():
+                        if status == -1:
+                            # Worker finished
+                            pbar.update(1)
+                            del predict_tasks[task_name]
+                        elif (time.perf_counter() - status) > 120:
+                            # Timeout
+                            print(f"\n[TIMEOUT] {task_name} exceeded 120s limit.")
+                            predict_fails.append(task_name)
+                            del predict_tasks[task_name]
 
-            pbar.close()
+                    time.sleep(1)  # Don't hammer the CPU
 
-            if predict_failed_list:
-                print(f"Failed ({len(predict_failed_list)}): {list(predict_failed_list)}")
+        except KeyboardInterrupt:
+            print("\n[!] User interrupted predictions. Cleaning up processes...")
+
+        finally:
+            if 'pbar' in locals():
+                pbar.close()
+
+            print("\n--- Prediction Summary ---")
+            if predict_fails:
+                print(f"Failed ({len(predict_fails)}): {list(predict_fails)}")
             else:
                 print("All predictions completed successfully.")
 
@@ -565,8 +583,9 @@ if __name__ == '__main__':
     # )
 
     run_predictions(
-        free_cores=6 # How many CPU cores do you want left free
+        free_cores=1 # How many CPU cores do you want left free
     )
+
 
 
 

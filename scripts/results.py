@@ -9,19 +9,19 @@ from tqdm import tqdm
 
 from scripts.config import LEDGER_DIR
 
+LEDGER_DIR = LEDGER_DIR.replace("ledgers", ".bin/4. old ledgers/ledgers")
+
 ########################################################################################################################
 
 def collect_ledgers() -> pd.DataFrame:
     all_data = []
     # Get all validated rows of the ledgers
-    for filename in tqdm(os.listdir(LEDGER_DIR), desc="Analysing ledgers", unit="ledger"):
+    for filename in tqdm(os.listdir(LEDGER_DIR.replace("ledgers", "ledgers")), desc="Analysing ledgers", unit="ledger"):
         try:
-            filepath = os.path.join(LEDGER_DIR, filename)
+            filepath = os.path.join(LEDGER_DIR.replace("ledgers", "ledgers"), filename)
             ledger = pd.read_csv(filepath)
 
-            completed = ledger.dropna(subset=['Actual_Price', 'Is_Correct']).copy()
-            completed = completed[(completed['Actual_Price'] != -1) & (completed['Is_Correct'] != -1)]
-
+            completed = ledger.dropna(subset=['Actual_Price']).copy()
             if not completed.empty:
                 all_data.append(completed)
 
@@ -29,7 +29,7 @@ def collect_ledgers() -> pd.DataFrame:
             print(f"\nError processing {filename}: {e}")
 
     if not all_data:
-        print("No valid completed predictions found to analyze.")
+        print("\nNo valid completed predictions found to analyze.")
         exit()
 
     # Combine everything into one analysis dataframe
@@ -38,13 +38,15 @@ def collect_ledgers() -> pd.DataFrame:
 def show_results(df: pd.DataFrame) -> None:
     total = len(df)
     model_cols = {
-        "LGBM": "LGBM_probability",
-        "SVC": "SVC_probability",
-        "LASSO": "LASSO_probability",
-        "LSTM": "LSTM_probability",
-        "Avg": "Avg_Probability"
+        "LGBM": "LGBM_signal",
+        "SVC": "SVC_signal",
+        "LASSO": "LASSO_signal",
+        "LSTM": "LSTM_signal",
+        "Avg": "AVG_signal"
     }
 
+    print(f"{'=' * 50}\n--- OVERALL Performance Report ---")
+    print(f"Total Evaluated: {total}")
     for name, col in model_cols.items():
         correct_column = f"{name}_correct"
 
@@ -57,30 +59,33 @@ def show_results(df: pd.DataFrame) -> None:
                               ( (df[col] < 0.50) & (df['Market_Went_Up'] == 0) ) ).astype(int)
 
         dir_correct = df[correct_column].sum()
-        print(f"{'=' * 50}\n--- {name} Performance Report ---")
-        print(f"Total Evaluated: {total}")
+        print(f"\n[{name} Model Summary]")
         print(f"Total correct: {dir_correct}")
         print(f"Directional Accuracy: {(dir_correct / total) * 100:.2f}%")
         if name == "Avg":
-            price_correct = (abs(df['Actual_Price'] - df['Predicted_Price']) / df['Predicted_Price'] < 0.02).sum()
+            price_correct = (abs(df['Actual_Price'] - df['Predicted_Price']) / df['Actual_Price'] < 0.02).sum()
             print(f"Price Accuracy (2%): {(price_correct / total) * 100:.2f}%")
 
-        horizons = ["1h", "2h", "4h", "25h", "1d", "2d", "7d", "28d"]
-        for h in horizons:
-            # Filter for the specific horizon
-            h_df = df[df['Horizon'] == h].copy()
+    horizons = ["1h", "2h", "4h", "25h", "1d", "2d", "7d", "28d"]
+    for h in horizons:
+        print(f"{'=' * 50}\n--- {h} Performance Report ---")
+        # Filter for the specific horizon
+        h_df = df[df['Horizon'] == h].copy()
 
-            if h_df.empty:
-                print(f"No data found for horizon: {h}")
-                continue
+        if h_df.empty:
+            print(f"No data found for horizon: {h}")
+            continue
 
-            h_total = len(h_df)
-            dir_correct_h = h_df[correct_column].sum()
+        h_total = len(h_df)
 
-            print(f"\n[{h} Horizon Summary]")
+        for name, col in model_cols.items():
+            correct_column = f"{name}_correct"
+            correct_h = h_df[correct_column].sum()
+
+            print(f"\n[{name} Model Summary]")
             print(f"Total Predictions: {h_total}")
-            print(f"Total correct: {dir_correct_h}")
-            print(f"Directional Accuracy: {(dir_correct_h / h_total) * 100:.2f}%")
+            print(f"Total correct: {correct_h}")
+            print(f"Directional Accuracy: {(correct_h / h_total) * 100:.2f}%")
 
             # # Set up the plot
             # fig, ax1 = plt.subplots(1, 1, figsize=(14, 5))
@@ -234,6 +239,46 @@ def close_analysis(df, horizon, correct_column):
 
 ########################################################################################################################
 
+def find_dupes():
+    from tqdm import tqdm
+    import pandas as pd
+    import os
+
+    from scripts.config import LEDGER_DIR
+
+    # LEDGER_DIR = LEDGER_DIR.replace("ledgers", "ledgers_2")
+
+    all_data = []
+    for filename in tqdm(os.listdir(LEDGER_DIR.replace("ledgers", "ledgers")), desc="Analysing ledgers", unit="ledger"):
+        try:
+            filepath = os.path.join(LEDGER_DIR.replace("ledgers", "ledgers"), filename)
+            ledger = pd.read_csv(filepath)
+            ledger["Ticker"] = filename.split("_")[0]
+
+            completed = ledger.dropna(subset=['Actual_Price']).copy()
+            if not completed.empty:
+                all_data.append(completed)
+
+        except Exception as e:
+            print(f"\nError processing {filename}: {e}")
+    if not all_data:
+        print("\nNo valid completed predictions found to analyze.")
+        exit()
+    data = pd.concat(all_data, ignore_index=True)
+
+    # Find all rows that share the same Horizon and Open_Date
+    duplicate_mask = data.duplicated(subset=['Ticker', 'Horizon', 'Open_Date'], keep=False)
+
+    # Filter the dataframe to see the duplicates
+    duplicates = data[duplicate_mask].sort_values(by=['Ticker', 'Open_Date', 'Horizon'])
+
+    print(f"Total completed: {len(data)}")
+    if not duplicates.empty:
+        print(f"\nFound {len(duplicates)} duplicate entries based on Horizon and Open_Date:")
+    else:
+        print("\nNo duplicates found.")
+
 if __name__ == '__main__':
     data = collect_ledgers()
     show_results(data)
+    # find_dupes()

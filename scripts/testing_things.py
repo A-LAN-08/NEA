@@ -26,7 +26,7 @@ def list_dir():
     predicted = set()
     for ledger in tqdm(os.listdir(LEDGER_DIR)):
         data = pd.read_csv(os.path.join(LEDGER_DIR, ledger))
-        if data.empty or len(data) < 1: continue
+        if data.empty or len(data) < 300: continue
         predicted.add(ledger.split("_")[0])
 
     missing = ticker_list - predicted
@@ -51,14 +51,17 @@ def remove_ticker_info():
     import shutil
     from tqdm import tqdm
 
-    from config import MODEL_DIR, CACHE_DIR
+    from config import MODEL_DIR, CACHE_DIR, LEDGER_DIR
 
-    tickers = {'MMC', 'FRPT', 'WEC', 'LASR', 'HUM', 'SN', 'NLY', 'TAP', 'EXPD', 'T', 'GPC', 'CYBR'}
+    tickers = {'HCA', 'GPC', 'EXC', 'CYBR', 'HBM', 'BEN', 'GLW', 'EMN', 'KVUE', 'ESLT', 'SN', 'DE', 'LRN', 'LSCC', 'MMC', 'EPAM', 'OVV', 'EXE', 'JAZZ', 'GILD', 'JD', 'PCAR', 'ENB', 'FRPT', 'UAL', 'WEC', 'WHR', 'LPX', 'KEYS', 'ELF', 'EXEL', 'SOFI', 'WDC', 'GIS', 'ITT', 'J', 'JBHT', 'TAP', 'CRL', 'LASR', 'GME', 'HMY', 'NLY', 'EXPD', 'ICLR', 'KDP', 'KEY', 'JCI', 'HON', 'ELAN', 'PPG', 'T', 'HUM', 'HL', 'ELV', 'GIL', 'RAPT', 'NVO', 'IVZ', 'GLD'}
     for ticker in tqdm(tickers):
-        try: shutil.rmtree(os.path.join(MODEL_DIR, f"{ticker}_1h"))
+        try: os.remove(os.path.join(LEDGER_DIR, f"{ticker}_ledger.csv"))
         except: pass
-        try: shutil.rmtree(os.path.join(MODEL_DIR, f"{ticker}_1d"))
-        except: pass
+
+        # try: shutil.rmtree(os.path.join(MODEL_DIR, f"{ticker}_1h"))
+        # except: pass
+        # try: shutil.rmtree(os.path.join(MODEL_DIR, f"{ticker}_1d"))
+        # except: pass
 
         # try: os.remove(os.path.join(CACHE_DIR, f"{ticker}_1h.csv"))
         # except: pass
@@ -279,6 +282,8 @@ def get_special(key):
 
 ##############################################################################################################
 """ testing pipeline """
+class DetailedException(Exception): pass
+
 def test_train():
     import pandas as pd
     import os
@@ -318,147 +323,169 @@ def test_predict():
     from lightgbm import Booster as LGBMBooster
     from safetensors.torch import load_file
 
-    from scripts.config import MODEL_DIR, DATA_DIR
+    from scripts.config import MODEL_DIR, DATA_DIR, LEDGER_DIR
     from scripts.data_management import load_data
-    from scripts.predictor import LSTMBrain, save_prediction, get_market_dates
+    from scripts.predictor import LSTMBrain, save_prediction, get_market_dates, prediction_saved, all_ticker_models_exist
     import scripts.indicators # noqa
 
-    ##### SETUP
+    ticker = "ZTS"
+    interval = "1h"
 
-    ticker = "AAPL"
-    interval = "1d"
+    try:
+        ##### SETUP
+        full_data = load_data(ticker, interval)
+        model_folder = os.path.join(MODEL_DIR, f"{ticker}_{interval}")
 
-    full_data = load_data(ticker, interval)
-    model_folder = os.path.join(MODEL_DIR, f"{ticker}_{interval}")
+        if not all_ticker_models_exist(model_folder, interval):
+            raise Exception("Not all ticker models exist.")
 
-    with open(os.path.join(model_folder, 'metadata.json'), 'r') as f:
-        meta = json.load(f)
-    with open(os.path.join(DATA_DIR, "model_hyperparameters.json"), 'r') as f:
-        hyper_meta = json.load(f)
+        with open(os.path.join(model_folder, 'metadata.json'), 'r') as f:
+            meta = json.load(f)
+        with open(os.path.join(DATA_DIR, "model_hyperparameters.json"), 'r') as f:
+            hyper_meta = json.load(f)
 
-    ##### AI BRAINS
+        ##### AI BRAINS
 
-    scaler = joblib.load(f"{model_folder}/scaler.joblib")
-    features = joblib.load(f"{model_folder}/features.joblib")
+        scaler = joblib.load(f"{model_folder}/scaler.joblib")
+        features = joblib.load(f"{model_folder}/features.joblib")
 
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model_registry = {}
-    horizons = {1:1, 2:2, 4:4, 8:25} if "h" in interval else {1:1, 2:2, 5:7, 21:28}
-    period = "h" if interval == "1h" else "d"
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        model_registry = {}
+        horizons = {1: 1, 2: 2, 4: 4, 8: 25} if "h" in interval else {1: 1, 2: 2, 5: 7, 21: 28}
+        period = "h" if interval == "1h" else "d"
 
-    for step in horizons.keys():
-        horizon_folder = os.path.join(model_folder, f"{step}_horizon_models")
-        if not os.path.exists(horizon_folder): continue
+        for step in horizons:
+            horizon_folder = os.path.join(model_folder, f"{step}_horizon_models")
+            if not os.path.exists(horizon_folder): continue
 
-        model_registry[step] = {"models": {}, "weights": {}}
-        global_meta = hyper_meta.get(f"{step}{period}", [])
+            model_registry[step] = {"models": {}, "weights": {}}
+            global_meta = hyper_meta.get(f"{step}{period}", [])
 
-        for model_filename in os.listdir(horizon_folder):
-            model_path = os.path.join(horizon_folder, model_filename)
+            for model_filename in os.listdir(horizon_folder):
+                model_path = os.path.join(horizon_folder, model_filename)
 
-            # Identify model type
-            if ".safetensors" in model_filename:
-                model_type = "LSTM"
-                params = next(m["best_params"] for m in global_meta if m["model_type"] == model_type)
-                # Initialize brain once
-                brain = LSTMBrain(
-                    input_dim=len(features),
-                    hidden_dim=params["module__hidden_dim"],
-                    layers=params["module__layers"],
-                    dropout=params["module__dropout"],
-                )
-                brain.load_state_dict(load_file(model_path))
-                brain.to(device).eval()
-                model_registry[step]["models"][model_type] = brain
+                # Identify model type
+                try:
+                    if ".safetensors" in model_filename:
+                        model_type = "LSTM"
+                        params = next(m["best_params"] for m in global_meta if m["model_type"] == model_type)
+                        # Initialize brain once
+                        brain = LSTMBrain(
+                            input_dim=len(features),
+                            hidden_dim=params["module__hidden_dim"],
+                            layers=params["module__layers"],
+                            dropout=params["module__dropout"],
+                        )
+                        brain.load_state_dict(load_file(model_path))
+                        brain.to(device).eval()
+                        model_registry[step]["models"][model_type] = brain
 
-            elif ".txt" in model_filename:
-                model_type = "LGBM"
-                model_registry[step]["models"][model_type] = LGBMBooster(model_file=model_path)
+                    elif ".txt" in model_filename:
+                        model_type = "LGBM"
+                        model_registry[step]["models"][model_type] = LGBMBooster(model_file=model_path)
 
-            else:
-                model_type = "SVC" if "SVC" in model_filename else "Lasso"
-                model_registry[step]["models"][model_type] = joblib.load(model_path)
+                    else:
+                        model_type = "SVC" if "SVC" in model_filename else "LASSO"
+                        model_registry[step]["models"][model_type] = joblib.load(model_path)
 
-            mcc_val = next((m["mcc"] for m in global_meta if m["model_type"] == model_type), 0)
-            if mcc_val > 0:
-                ticker_weight = meta.get(str(step), {}).get(f"{model_type}_result", {}).get("absolute_sharpe", 0)
-                global_weight = next((abs(m["sharpe_ratio"]) for m in global_meta if m["model_type"] == model_type), 0)
-                results_weight = next(w for m, w in {"LGBM": 0.4, "SVC": 0.4, "Lasso": 0.1, "LSTM": 0.1}.items() if m == model_type)
+                except Exception as e:
+                    raise DetailedException(
+                        f"\n[CORRUPT MODEL] {ticker} ({interval}) | Horizon: {step}{period} | File: {model_filename}\n"
+                        f"-->{type(e).__name__} - {e}"
+                    )
 
-                model_registry[step]["weights"][model_type] = (results_weight * 0.5) + (ticker_weight * 0.3) + (global_weight * 0.2)
+        ##### Walk forward predictions
 
-            else:
-                model_registry[step]["weights"][model_type] = 0
+        last_train_date = pd.to_datetime(meta["training data end"])
+        test_data = full_data[full_data.index > last_train_date]
 
-    ##### Walk forward predictions
+        history = full_data[full_data.index <= last_train_date].tail(400).copy()
+        processed_df = history.ind.add_indicators(ticker, interval)
 
-    last_train_date = pd.to_datetime(meta["training data end"])
-    test_data = full_data[full_data.index > last_train_date]
+        ledger_file = os.path.join(LEDGER_DIR, f"{ticker}_ledger.csv")
+        ledger = None
+        if os.path.exists(ledger_file):
+            ledger: pd.DataFrame = pd.read_csv(ledger_file)
+            ledger['Open_Date'] = pd.to_datetime(ledger['Open_Date'], format='ISO8601')
 
-    history = full_data[full_data.index <= last_train_date].tail(400).copy()
-    processed_df = history.ind.add_indicators(ticker, interval)
+        weights = {
+            "1h": {"LSTM": 0.35, "LGBM": 0.25, "LASSO": 0.25, "SVC": -0.15},
+            "25h": {"SVC": 0.4, "LASSO": 0.2, "LGBM": 0.2, "LSTM": 0.2},
+            "1d": {"SVC": -0.5, "LSTM": 0.2, "LGBM": 0.2, "LASSO": 0.1},
+            "2d": {"SVC": -0.7, "LGBM": 0.1, "LASSO": 0.1, "LSTM": -0.1},
+            "28d": {"SVC": 0.5, "LGBM": 0.3, "LASSO": -0.1, "LSTM": -0.1},
+            "default": {"LSTM": 0.3, "LGBM": 0.3, "SVC": 0.2, "LASSO": 0.2}
+        }
 
-    for current_time in test_data.index:
-        current_price = processed_df['Adj Close'].iloc[-1]
-        current_volatility_atr = float(processed_df['ATR'].iloc[-1])
+        for current_time in test_data.index:
+            if ledger is not None:
+                # Check if any entry matches current ticker and last trade date
+                match: pd.DataFrame = ledger[(ledger['Interval'] == interval) &
+                                             (ledger['Open_Date'] == current_time) &
+                                             (ledger["Horizon"].isin([f"{horizon}{period}" for horizon in horizons]))]  # noqa
+                if not match.empty: continue
 
-        target_dates = get_market_dates(current_time, horizons, period)
-        if len(target_dates) < 1: continue
+            current_price = processed_df['Adj Close'].iloc[-1]
+            current_volatility_atr = float(processed_df['ATR'].iloc[-1])
 
-        step_forecasts = {}
-        for step, bundle in model_registry.items():
-            if target_dates[step] is None: continue
+            target_dates = get_market_dates(current_time, horizons, period)
+            if len(target_dates) < 1: continue
 
-            probs = {}
-            for model_type, model_obj in bundle["models"].items():
-                if model_type == "LSTM":
-                    recent_data = processed_df[features].tail(14)
-                    scaled_seq = scaler.transform(recent_data)
-                    x_3d = np.expand_dims(scaled_seq, axis=0).astype(np.float32)
+            step_forecasts = {}
+            for step, bundle in model_registry.items():
+                if target_dates[step] is None: continue
 
-                    with torch.no_grad():
-                        probs[model_type] = float(model_obj(torch.from_numpy(x_3d).to(device)).item())
+                signals = {}
+                for model_type, model_obj in bundle["models"].items():
+                    if model_type == "LSTM":
+                        recent_data = processed_df[features].tail(14)
+                        scaled_seq = scaler.transform(recent_data)
+                        x_3d = np.expand_dims(scaled_seq, axis=0).astype(np.float32)
 
-                elif model_type == "LGBM":
-                    scaled_row = scaler.transform(processed_df[features].iloc[-1:])
-                    probs[model_type] = float(model_obj.predict(scaled_row)[0])
+                        with torch.no_grad():
+                            signals[model_type] = (float(model_obj(torch.from_numpy(x_3d).to(device)).item()) - 0.5) * 2
 
-                else:  # Lasso / SVC
-                    scaled_row = scaler.transform(processed_df[features].iloc[-1:])
-                    probs[model_type] = float(model_obj.predict_proba(scaled_row)[0][1])
+                    elif model_type == "LGBM":
+                        scaled_row = scaler.transform(processed_df[features].iloc[-1:])
+                        signals[model_type] = (float(model_obj.predict(scaled_row)[0]) - 0.5) * 2
 
-            weights = bundle["weights"]
-            total_weight = sum(weights.values())
-            avg_up_proba = sum(probs[m] * weights[m] for m in probs) / total_weight if total_weight > 0 else 0.5
+                    else:  # Lasso / SVC
+                        scaled_row = scaler.transform(processed_df[features].iloc[-1:])
+                        signals[model_type] = (float(model_obj.predict_proba(scaled_row)[0][1]) - 0.5) * 2
 
-            # Calculate whether it will go up or down
-            adjusted_probability = max(avg_up_proba, 1 - avg_up_proba)
-            direction = "UP ▲" if avg_up_proba > 0.5 else "DOWN ▼"
+                # Average prediction
+                horizon_weights = weights.get(f"{horizons[step]}{period}",
+                                              {"LSTM": 0.3, "LGBM": 0.3, "SVC": 0.2, "LASSO": 0.2})
+                avg_signal = sum(horizon_weights[key] * signals[key] for key in horizon_weights.keys())
 
-            # Calculate predicted price
-            direction_multiplier = 1 if avg_up_proba > 0.5 else -1
-            confidence_strength = 2 * (adjusted_probability - 0.5)
-            expected_move_magnitude = current_volatility_atr * np.sqrt(step)
+                # Calculate predicted price
+                expected_move_magnitude = current_volatility_atr * np.sqrt(step)
+                predicted_price = current_price + (2 * avg_signal * expected_move_magnitude)
+                capped_width = min(expected_move_magnitude * abs(avg_signal / 2), current_price * 0.1)
 
-            predicted_price = current_price + (direction_multiplier * expected_move_magnitude * confidence_strength)
-            capped_width = min(expected_move_magnitude * (1.0 + confidence_strength), current_price * 0.15)
+                step_forecasts[step] = {
+                    "Date_Predicted": current_time.strftime("%Y-%m-%d %H:%M"),
+                    'Target_Date': target_dates[step],
+                    "Current_Price": current_price,
+                    'Predicted_Price': predicted_price,
+                    'up': predicted_price + capped_width,
+                    'lo': predicted_price - capped_width,
+                    'time_difference': horizons[step],
+                    'LSTM_signal': signals["LSTM"],
+                    'LGBM_signal': signals["LGBM"],
+                    'SVC_signal': signals["SVC"],
+                    'LASSO_signal': signals["LASSO"],
+                    'AVG_signal': avg_signal,
 
-            step_forecasts[step] = {
-                "current_price": current_price,
-                'price': predicted_price,
-                'up': predicted_price + capped_width,
-                'lo': predicted_price - capped_width,
-                'target_date': target_dates[step],
-                'time_difference': horizons[step],
-                'avg_probability': adjusted_probability,
-                'dir': direction,
-                'LSTM_probability': probs["LSTM"],
-                'LGBM_probability': probs["LGBM"],
-                'SVC_probability': probs["SVC"],
-                'LASSO_probability': probs["Lasso"],
-            }
+                }
 
-        save_prediction(ticker, interval, current_time, step_forecasts)
+            save_prediction(ticker, interval, step_forecasts)
+
+    except Exception as e:
+        if isinstance(e, DetailedException):
+            print(e)
+        else:
+            print(f"\nERROR on {ticker} ({interval})\n--->{type(e).__name__}: {e}")
 
 ##############################################################################################################
 
@@ -478,7 +505,7 @@ def validate_ledgers():
         # Load ledger and find all entries that are unvalidated
         ledger = pd.read_csv(ledger_path)
         NaNs = ledger['Actual_Price'].isna()  # noqa
-        if not NaNs.any(): return
+        if not NaNs.any(): continue
 
         # Load existing hourly and daily data for the stock
         ledger['Target_Date'] = pd.to_datetime(ledger['Target_Date'], format='ISO8601')
@@ -496,25 +523,12 @@ def validate_ledgers():
 
             # If predicted date has passed, determine correctness of prediction
             if target_date in df.index:
-                start_price = row["Current_Price"]
-                actual_price = float(df.asof(target_date)['Close'])
-                pred_price = float(row['Predicted_Price'])
-                direction = row['Direction']
-
-                # Check if the prediction is correct
-                direction_correct = (("UP" in direction and actual_price > start_price)
-                                     or ("DOWN" in direction and actual_price < start_price))
-                price_accurate = abs(actual_price - pred_price) / actual_price <= 0.02
-
-                # Update validation fields in the records as integers for pandas datatype consistency
-                ledger.at[idx, 'Actual_Price'] = round(actual_price, 2)
-                ledger.at[idx, 'Is_Correct'] = int(direction_correct and price_accurate)
+                ledger.at[idx, 'Actual_Price'] = round(float(df.asof(target_date)['Close']), 2)
                 updated = True
 
             # If predicted date outside market hours set invalid
             elif not is_market_open(target_date, daily=True):
                 ledger.at[idx, "Actual_Price"] = -1
-                ledger.at[idx, "Is_Correct"] = -1
                 updated = True
 
         if updated:
@@ -522,9 +536,48 @@ def validate_ledgers():
             ledger['Target_Date'] = ledger['Target_Date'].dt.strftime('%Y-%m-%d %H:%M')
             ledger.to_csv(ledger_path, index=False)
 
+def find_dupes():
+    from tqdm import tqdm
+    import pandas as pd
+    import os
+
+    from scripts.config import LEDGER_DIR
+
+    LEDGER_DIR = LEDGER_DIR.replace("ledgers", "ledgers_1")
+
+    all_data = []
+    for filename in tqdm(os.listdir(LEDGER_DIR.replace("ledgers", "ledgers")), desc="Analysing ledgers", unit="ledger"):
+        try:
+            filepath = os.path.join(LEDGER_DIR.replace("ledgers", "ledgers"), filename)
+            ledger = pd.read_csv(filepath)
+
+            completed = ledger.dropna(subset=['Actual_Price']).copy()
+            if not completed.empty:
+                all_data.append(completed)
+
+        except Exception as e:
+            print(f"\nError processing {filename}: {e}")
+    if not all_data:
+        print("\nNo valid completed predictions found to analyze.")
+        exit()
+    data = pd.concat(all_data, ignore_index=True)
+
+    # Find all rows that share the same Horizon and Open_Date
+    duplicate_mask = data.duplicated(subset=['Horizon', 'Open_Date'], keep=False)
+
+    # Filter the dataframe to see the duplicates
+    duplicates = data[duplicate_mask].sort_values(by=['Open_Date', 'Horizon'])
+
+    if not duplicates.empty:
+        print(f"\nFound {len(duplicates)} duplicate entries based on Horizon and Open_Date:")
+    else:
+        print("\nNo duplicates found.")
+
 ##############################################################################################################
 
 if __name__ in "__main__":
+    import time
+    start = time.perf_counter()
 
     # from predictor import run_prediction_pipeline
     # print("Starting...")
@@ -544,11 +597,13 @@ if __name__ in "__main__":
     # get_special("^TYX")
 
     # test_train()
-    # test_predict()
-    validate_ledgers()
+    test_predict()
+    # validate_ledgers()
+    # find_dupes()
 
     # list_dir()
     # check_model_corruption()
 
 
+    print(time.perf_counter() - start)
     pass
