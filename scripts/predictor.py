@@ -480,12 +480,6 @@ class TrainingManager:
 
 ############################################################################
 
-
-"""                 """
-""" OUTDATED BELOW: """
-"""                 """
-
-
 # Save prediction to ledger
 def save_prediction(ticker: str, interval: str, forecast_results: dict) -> None:
     # Check if that exact prediction has already been saved (note: using same model will always return the same prediction for the same data)
