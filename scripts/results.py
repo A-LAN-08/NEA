@@ -7,9 +7,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from tqdm import tqdm
 
-from scripts.config import LEDGER_DIR
-
-LEDGER_DIR = LEDGER_DIR.replace("ledgers", ".bin/4. old ledgers/ledgers")
+from scripts.config import LEDGER_DIR, ROOT_DIR
 
 ########################################################################################################################
 
@@ -22,6 +20,7 @@ def collect_ledgers() -> pd.DataFrame:
             ledger = pd.read_csv(filepath)
 
             completed = ledger.dropna(subset=['Actual_Price']).copy()
+            completed["Ticker"] = filename.split("_")[0]
             if not completed.empty:
                 all_data.append(completed)
 
@@ -35,6 +34,8 @@ def collect_ledgers() -> pd.DataFrame:
     # Combine everything into one analysis dataframe
     return pd.concat(all_data, ignore_index=True)
 
+########################################################################################################################
+
 def show_results(df: pd.DataFrame) -> None:
     total = len(df)
     model_cols = {
@@ -42,7 +43,7 @@ def show_results(df: pd.DataFrame) -> None:
         "SVC": "SVC_signal",
         "LASSO": "LASSO_signal",
         "LSTM": "LSTM_signal",
-        "Avg": "AVG_signal"
+        "AVG": "AVG_signal"
     }
 
     print(f"{'=' * 50}\n--- OVERALL Performance Report ---")
@@ -51,18 +52,17 @@ def show_results(df: pd.DataFrame) -> None:
         correct_column = f"{name}_correct"
 
         # Ensure types are correct for the whole dataframe first
-        df[col] = df[col].astype(str).str.replace('%', '', regex=False)
-        df[col] = pd.to_numeric(df[col], errors='coerce') / 100.0
+        df[col] = pd.to_numeric(df[col], errors='coerce')
 
-        df['Market_Went_Up'] = (df["Actual_Price"] > df["Current_Price"]).astype(int)
-        df[correct_column] = (( (df[col] > 0.50) & (df['Market_Went_Up'] == 1) ) |
-                              ( (df[col] < 0.50) & (df['Market_Went_Up'] == 0) ) ).astype(int)
+        df['Market_Went_Up'] = (df["Actual_Price"] > df["Current_Price"]).astype(int) # noqa
+        df[correct_column] = (( (df[col] > 0) & (df['Market_Went_Up'] == 1) ) |
+                              ( (df[col] < 0) & (df['Market_Went_Up'] == 0) ) ).astype(int)
 
         dir_correct = df[correct_column].sum()
         print(f"\n[{name} Model Summary]")
         print(f"Total correct: {dir_correct}")
         print(f"Directional Accuracy: {(dir_correct / total) * 100:.2f}%")
-        if name == "Avg":
+        if name == "AVG":
             price_correct = (abs(df['Actual_Price'] - df['Predicted_Price']) / df['Actual_Price'] < 0.02).sum()
             print(f"Price Accuracy (2%): {(price_correct / total) * 100:.2f}%")
 
@@ -77,7 +77,6 @@ def show_results(df: pd.DataFrame) -> None:
             continue
 
         h_total = len(h_df)
-
         for name, col in model_cols.items():
             correct_column = f"{name}_correct"
             correct_h = h_df[correct_column].sum()
@@ -87,26 +86,9 @@ def show_results(df: pd.DataFrame) -> None:
             print(f"Total correct: {correct_h}")
             print(f"Directional Accuracy: {(correct_h / h_total) * 100:.2f}%")
 
-            # # Set up the plot
-            # fig, ax1 = plt.subplots(1, 1, figsize=(14, 5))
-            # fig.suptitle(f'Analysis for {h} Horizon', fontsize=16)
-            #
-            # if h_df[col].nunique() > 1:
-            #     sns.kdeplot(data=h_df[h_df[correct_column] == 1], x=col,
-            #                 fill=True, color='green', label='Correct', ax=ax1, warn_singular=False)
-            #
-            #     sns.kdeplot(data=h_df[h_df[correct_column] == 0], x=col,
-            #                 fill=True, color='red', label='Incorrect', ax=ax1, warn_singular=False)
-            #
-            # ax1.set_title(f"{col} Distribution")
-            # ax1.legend()
-            #
-            # plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-            # plt.show()
-
-            # plot_calibration_curve(h_df, col, h)
-            # close_analysis(h_df, h, correct_column)
-
+            # if name == "AVG":
+            plot_signal_accuracy(h_df, h, col, correct_column)
+            plot_signal_correctness(h_df, h, col, correct_column)
 
 def plot_calibration_curve(df: pd.DataFrame, prob_col: str, horizon: str):
     df = df.copy()
@@ -144,53 +126,133 @@ def plot_calibration_curve(df: pd.DataFrame, prob_col: str, horizon: str):
     plt.legend()
     plt.show()
 
+def plot_signal_accuracy(h_df: pd.DataFrame, horizon: str, col_name: str, correct_col: str) -> None:
+    # Create 20 bins from -1 to 1 (0.1 width each)
+    bins = np.linspace(-1, 1, 101)
+    # Use the center of each bin for the x-axis labels
+    bin_centers = (bins[:-1] + bins[1:]) / 2
+
+    plt.figure(figsize=(12, 6))
+
+    # Assign each row to a bin
+    h_df['signal_bin'] = pd.cut(h_df[col_name], bins=bins, labels=bin_centers)
+
+    # Group by bin and calculate mean accuracy and count
+    stats = h_df.groupby('signal_bin', observed=False)[correct_col].agg(['mean', 'count'])
+
+    # Filter out bins with too few samples to avoid statistical noise
+    min_samples = 20
+    valid_stats = stats[stats['count'] >= min_samples]
+
+    if valid_stats.empty:
+        print(f"Not enough data to plot signal accuracy for {horizon}")
+        plt.close()
+        return
+
+    # Convert mean (0-1) to percentage (0-100)
+    plt.plot(valid_stats.index, valid_stats['mean'] * 100,
+             marker='o', linestyle='-', linewidth=2, label=f'{col_name} ({horizon}) Accuracy')
+
+    # Reference line for random guessing
+    plt.axhline(y=50, color='red', linestyle='--', alpha=0.5, label='50% Baseline')
+
+    plt.title(f'Signal Strength vs. Accuracy')
+    plt.xlabel('Signal Value')
+    plt.ylabel('Directional Accuracy (%)')
+    plt.ylim(0, 100)
+    plt.grid(True, which='both', linestyle=':', alpha=0.7)
+    plt.legend()
+
+    save_path = os.path.join(ROOT_DIR, "plots", f"{col_name}_{horizon}.png")
+    plt.savefig(save_path)
+    plt.close()
+
+def plot_signal_correctness(h_df: pd.DataFrame, horizon: str, col_name: str, correct_col: str) -> None:
+    # Use many bins to provide data for the smoothing function
+    bins = np.linspace(-1, 1, 101)
+    bin_centers = (bins[:-1] + bins[1:]) / 2
+
+    # Assign each row to a bin
+    h_df = h_df.copy()
+    h_df['signal_bin'] = pd.cut(h_df[col_name], bins=bins, labels=bin_centers)
+
+    # Calculate total counts for correct and incorrect predictions per bin
+    # Use observed=False to ensure we have a continuous index for smoothing
+    stats = h_df.groupby('signal_bin', observed=False).apply(
+        lambda x: pd.Series({
+            'correct': (x[correct_col] == 1).sum(),
+            'wrong': (x[correct_col] == 0).sum()
+        })
+    )
+
+    # Apply Gaussian smoothing to the counts to get "smooth curves"
+    # window=10 provides a balance between detail and smoothness
+    smooth_stats = stats.rolling(window=10, win_type='gaussian', center=True).mean(std=3)
+
+    plt.figure(figsize=(12, 6))
+
+    # Plot the smoothed curves
+    plt.plot(bin_centers, smooth_stats['correct'],
+             color='green', linewidth=2.5, label='Total Correct (Smoothed)')
+    plt.plot(bin_centers, smooth_stats['wrong'],
+             color='red', linewidth=2.5, label='Total Incorrect (Smoothed)', alpha=0.7)
+
+    # Fill areas to make the "Total" volume visible
+    plt.fill_between(bin_centers, smooth_stats['correct'], color='green', alpha=0.1)
+    plt.fill_between(bin_centers, smooth_stats['wrong'], color='red', alpha=0.05)
+
+    plt.title(f'Prediction Frequency by Signal Strength ({horizon})')
+    plt.xlabel('Signal Value (-1 to 1)')
+    plt.ylabel('Smoothed Frequency (Total Predictions)')
+    plt.grid(True, which='both', linestyle=':', alpha=0.5)
+    plt.legend()
+
+    # Create the plot directory if it doesn't exist
+    save_dir = os.path.join(ROOT_DIR, "plots")
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+
+    save_path = os.path.join(save_dir, f"signal_frequency_{horizon}_{col_name}.png")
+    plt.savefig(save_path)
+    plt.close()
+
 ########################################################################################################################
 
-def ideal_curve():
-    # Set seed for reproducible NEA results
-    np.random.seed(42)
+def find_top_predictable_tickers(df: pd.DataFrame) -> None:
+    horizons = df['Horizon'].unique()
 
-    # Generate overlapping data to look like a "great but realistic" model
-    # Correct: Peak at 0.72 | Incorrect: Peak at 0.38
-    correct_vals = np.random.normal(0.72, 0.12, 1000)
-    incorrect_vals = np.random.normal(0.38, 0.14, 1000)
+    # Ensure AVG_correct is calculated
+    df['Market_Went_Up'] = (df["Actual_Price"] > df["Current_Price"]).astype(int) # noqa
+    df['AVG_signal'] = pd.to_numeric(df['AVG_signal'], errors='coerce')
+    df['AVG_correct'] = (((df['AVG_signal'] > 0) & (df['Market_Went_Up'] == 1)) |
+                         ((df['AVG_signal'] < 0) & (df['Market_Went_Up'] == 0))).astype(int)
 
-    # Build the mock h_df
-    h_df = pd.DataFrame({
-        'Confidence': np.clip(np.concatenate([correct_vals, incorrect_vals]), 0, 1),
-    })
+    print(f"\n{'=' * 60}")
+    print(f"TOP TICKERS BY DIRECTIONAL ACCURACY")
+    print(f"{'=' * 60}")
 
-    # Create the masks just like your real script does
-    dir_correct_h_data = np.array([True] * 1000 + [False] * 1000)
-    dir_incorrect_h_data = ~dir_correct_h_data
+    for h in horizons:
+        h_df = df[df['Horizon'] == h].copy()
+        if h_df.empty: continue
 
-    # Setup the plot (Using your exact formatting)
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
-    fig.suptitle('Idealized Analysis for 21h Horizon', fontsize=16)
+        ticker_stats = h_df.groupby('Ticker')['AVG_correct'].agg(['mean', 'count']).reset_index()
+        significant_tickers = ticker_stats[ticker_stats['count'] >= 50].copy()
+        ticker_results = significant_tickers.sort_values(by='mean', ascending=False)
+        top_50 = ticker_results.head(50)
 
-    # Left Plot: Distribution (Using your exact labels and logic)
-    if h_df['Confidence'].nunique() > 1:
-        sns.kdeplot(data=h_df[dir_correct_h_data], x='Confidence',
-                    fill=True, color='green', label='Correct', ax=ax1, warn_singular=False)
+        print(f"\n>>> Horizon: {h} (Found {len(significant_tickers)} significant tickers)")
+        if top_50.empty:
+            print("No tickers met the minimum prediction threshold.")
+            continue
 
-        sns.kdeplot(data=h_df[dir_incorrect_h_data], x='Confidence',
-                    fill=True, color='red', label='Incorrect', ax=ax1, warn_singular=False)
+        for i, (idx, row) in enumerate(top_50.iterrows(), 1):
+            print(f"{i:2}. {row['Ticker']:<6} | Accuracy: {row['mean'] * 100:6.2f}% | n={int(row['count'])}")
 
-    ax1.set_title("Confidence Distribution")
-    ax1.legend()
+        ticker_results.to_csv(os.path.join(ROOT_DIR, "results", f"{h}.csv"), index=False)
 
-    # Mocking the right plot (Scatter) to show "Error decreasing as Confidence increases"
-    # This makes the model look competent
-    h_df['Price_Error_Pct'] = 15 - (h_df['Confidence'] * 12) + np.random.normal(0, 2, 2000)
-    h_df['Price_Error_Pct'] = h_df['Price_Error_Pct'].clip(lower=0.5)
+        input(f'{"=" * 50} \n')
 
-    sns.regplot(data=h_df, x='Confidence', y='Price_Error_Pct', ax=ax2,
-                scatter_kws={'alpha': 0.1}, line_kws={'color': 'blue'})
-    ax2.set_ylim(0, 20)
-    ax2.set_title("Confidence vs. Price Error %")
-
-    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    plt.show()
+########################################################################################################################
 
 def close_analysis(df, horizon, correct_column):
     # Filter specifically for the 1h horizon
@@ -239,46 +301,7 @@ def close_analysis(df, horizon, correct_column):
 
 ########################################################################################################################
 
-def find_dupes():
-    from tqdm import tqdm
-    import pandas as pd
-    import os
-
-    from scripts.config import LEDGER_DIR
-
-    # LEDGER_DIR = LEDGER_DIR.replace("ledgers", "ledgers_2")
-
-    all_data = []
-    for filename in tqdm(os.listdir(LEDGER_DIR.replace("ledgers", "ledgers")), desc="Analysing ledgers", unit="ledger"):
-        try:
-            filepath = os.path.join(LEDGER_DIR.replace("ledgers", "ledgers"), filename)
-            ledger = pd.read_csv(filepath)
-            ledger["Ticker"] = filename.split("_")[0]
-
-            completed = ledger.dropna(subset=['Actual_Price']).copy()
-            if not completed.empty:
-                all_data.append(completed)
-
-        except Exception as e:
-            print(f"\nError processing {filename}: {e}")
-    if not all_data:
-        print("\nNo valid completed predictions found to analyze.")
-        exit()
-    data = pd.concat(all_data, ignore_index=True)
-
-    # Find all rows that share the same Horizon and Open_Date
-    duplicate_mask = data.duplicated(subset=['Ticker', 'Horizon', 'Open_Date'], keep=False)
-
-    # Filter the dataframe to see the duplicates
-    duplicates = data[duplicate_mask].sort_values(by=['Ticker', 'Open_Date', 'Horizon'])
-
-    print(f"Total completed: {len(data)}")
-    if not duplicates.empty:
-        print(f"\nFound {len(duplicates)} duplicate entries based on Horizon and Open_Date:")
-    else:
-        print("\nNo duplicates found.")
-
 if __name__ == '__main__':
     data = collect_ledgers()
     show_results(data)
-    # find_dupes()
+    # find_top_predictable_tickers(data)

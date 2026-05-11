@@ -9,6 +9,8 @@ cache_files/
 models/
 ledgers*/
 .bin/
+plots/
+results/
 
 # UV and others
 uv.lock

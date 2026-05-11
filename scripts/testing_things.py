@@ -15,14 +15,6 @@ def list_dir():
         ticker_map = json.load(f)
         ticker_list = set(sorted(list(ticker_map.values()))[::-1])
 
-    # ticker_intervals = set()
-    # for ticker in ticker_list:
-    #     ticker_intervals.add(f"{ticker}_1h")
-    #     ticker_intervals.add(f"{ticker}_1d")
-
-    # trained_intervals = {model for model in os.listdir(MODEL_DIR) if os.path.isdir(os.path.join(MODEL_DIR, model))}
-    # missing = ticker_intervals - trained_intervals
-
     predicted = set()
     for ledger in tqdm(os.listdir(LEDGER_DIR)):
         data = pd.read_csv(os.path.join(LEDGER_DIR, ledger))
@@ -30,19 +22,6 @@ def list_dir():
         predicted.add(ledger.split("_")[0])
 
     missing = ticker_list - predicted
-
-    # trained = {model.split("_")[0] for model in os.listdir(MODEL_DIR) if os.path.isdir(os.path.join(MODEL_DIR, model))}
-    # trained_list = sorted(list(trained))
-
-    # left = ticker_list - trained
-
-    # print(f"LEN TRAINED: {len(trained_list)}")
-    # print(f"Head: {trained_list[:10]}")
-    # print(f"Tail: {trained_list[-10:]}")
-
-    # print(f"Left to train: {left}")
-    # print(f"-> {len(left)} left")
-
     print(f"Missing: {missing}")
     print(f"-> {len(missing)}")
 
@@ -328,11 +307,11 @@ def test_predict():
     from scripts.predictor import LSTMBrain, save_prediction, get_market_dates, prediction_saved, all_ticker_models_exist
     import scripts.indicators # noqa
 
-    ticker = "ZTS"
-    interval = "1h"
+    ticker = "AAOI"
+    interval = "1d"
 
     try:
-        ##### SETUP
+        ## -----  SETUP  ----- ##
         full_data = load_data(ticker, interval)
         model_folder = os.path.join(MODEL_DIR, f"{ticker}_{interval}")
 
@@ -344,8 +323,7 @@ def test_predict():
         with open(os.path.join(DATA_DIR, "model_hyperparameters.json"), 'r') as f:
             hyper_meta = json.load(f)
 
-        ##### AI BRAINS
-
+        ## -----  AI BRAINS  ----- ##
         scaler = joblib.load(f"{model_folder}/scaler.joblib")
         features = joblib.load(f"{model_folder}/features.joblib")
 
@@ -394,13 +372,12 @@ def test_predict():
                         f"-->{type(e).__name__} - {e}"
                     )
 
-        ##### Walk forward predictions
-
+        ## -----  Walk forward predictions  ----- ##
         last_train_date = pd.to_datetime(meta["training data end"])
-        test_data = full_data[full_data.index > last_train_date]
+        processed_df = full_data.ind.add_indicators(ticker, interval)
 
-        history = full_data[full_data.index <= last_train_date].tail(400).copy()
-        processed_df = history.ind.add_indicators(ticker, interval)
+        trained_data = processed_df[processed_df.index <= last_train_date].tail(400).copy()
+        testing_data = processed_df[processed_df.index > last_train_date]
 
         ledger_file = os.path.join(LEDGER_DIR, f"{ticker}_ledger.csv")
         ledger = None
@@ -417,16 +394,20 @@ def test_predict():
             "default": {"LSTM": 0.3, "LGBM": 0.3, "SVC": 0.2, "LASSO": 0.2}
         }
 
-        for current_time in test_data.index:
+        history = trained_data.copy()
+        for current_time in testing_data.index:
+            current_row = testing_data.loc[[current_time]]
+            history = pd.concat([history, current_row])
+            recent_history = history.tail(400).copy()
+
             if ledger is not None:
                 # Check if any entry matches current ticker and last trade date
                 match: pd.DataFrame = ledger[(ledger['Interval'] == interval) &
-                                             (ledger['Open_Date'] == current_time) &
-                                             (ledger["Horizon"].isin([f"{horizon}{period}" for horizon in horizons]))]  # noqa
+                                             (ledger['Open_Date'] == current_time)]
                 if not match.empty: continue
 
-            current_price = processed_df['Adj Close'].iloc[-1]
-            current_volatility_atr = float(processed_df['ATR'].iloc[-1])
+            current_price = recent_history['Adj Close'].iloc[-1]
+            current_volatility_atr = float(recent_history['ATR'].iloc[-1])
 
             target_dates = get_market_dates(current_time, horizons, period)
             if len(target_dates) < 1: continue
@@ -438,20 +419,20 @@ def test_predict():
                 signals = {}
                 for model_type, model_obj in bundle["models"].items():
                     if model_type == "LSTM":
-                        recent_data = processed_df[features].tail(14)
+                        recent_data = recent_history[features].tail(14)
                         scaled_seq = scaler.transform(recent_data)
                         x_3d = np.expand_dims(scaled_seq, axis=0).astype(np.float32)
 
                         with torch.no_grad():
-                            signals[model_type] = (float(model_obj(torch.from_numpy(x_3d).to(device)).item()) - 0.5) * 2
+                            signals[model_type] = (float(model_obj(torch.from_numpy(x_3d).to(device)).item()) - 0.5) * -2
 
                     elif model_type == "LGBM":
-                        scaled_row = scaler.transform(processed_df[features].iloc[-1:])
-                        signals[model_type] = (float(model_obj.predict(scaled_row)[0]) - 0.5) * 2
+                        scaled_row = scaler.transform(recent_history[features].iloc[-1:])
+                        signals[model_type] = (float(model_obj.predict(scaled_row)[0]) - 0.5) * -2
 
                     else:  # Lasso / SVC
-                        scaled_row = scaler.transform(processed_df[features].iloc[-1:])
-                        signals[model_type] = (float(model_obj.predict_proba(scaled_row)[0][1]) - 0.5) * 2
+                        scaled_row = scaler.transform(recent_history[features].iloc[-1:])
+                        signals[model_type] = (float(model_obj.predict_proba(scaled_row)[0][1]) - 0.5) * -2
 
                 # Average prediction
                 horizon_weights = weights.get(f"{horizons[step]}{period}",
@@ -543,7 +524,7 @@ def find_dupes():
 
     from scripts.config import LEDGER_DIR
 
-    LEDGER_DIR = LEDGER_DIR.replace("ledgers", "ledgers_1")
+    # LEDGER_DIR = LEDGER_DIR.replace("ledgers", "ledgers_1")
 
     all_data = []
     for filename in tqdm(os.listdir(LEDGER_DIR.replace("ledgers", "ledgers")), desc="Analysing ledgers", unit="ledger"):
@@ -597,13 +578,20 @@ if __name__ in "__main__":
     # get_special("^TYX")
 
     # test_train()
-    test_predict()
-    # validate_ledgers()
-    # find_dupes()
+    # test_predict()
+    validate_ledgers()
 
+    # find_dupes()
     # list_dir()
     # check_model_corruption()
 
 
     print(time.perf_counter() - start)
     pass
+
+
+# tickers with no models:
+# {'CRL_1h', 'AMGN_1d', 'HSIC_1d', 'SUI_1d', 'ICLR_1h', 'ISRG_1d', 'FAST_1d', 'AXTI_1d', 'OVV_1h', 'CTAS_1d', 'BAH_1d', 'KMX_1d', 'PEGA_1d', 'MRK_1d', 'MCHP_1d', 'RBC_1d', 'PCAR_1h', 'ESLT_1h', 'BEN_1h', 'DUOL_1d', 'TEVA_1d', 'SAN_1d', 'TRU_1d', 'PPG_1h', 'SCCO_1d', 'DE_1h', 'UHS_1d', 'CHTR_1d', 'FFIV_1d', 'MARA_1d', 'EFX_1d', 'AMD_1d', 'USFD_1d', 'INTC_1d', 'GWRE_1d', 'EXK_1d', 'WHR_1h', 'TCOM_1d', 'SWK_1d', 'KTOS_1d', 'WIX_1d', 'MTCH_1d', 'ALLE_1d', 'EOG_1d', 'PR_1d', 'GLW_1h', 'LFUS_1d', 'EPAM_1h', 'WDC_1h', 'EMR_1d'}
+
+# tickers with fucked models:
+# {'TAP_1d', 'FRPT_1d', 'SN_1h', 'WEC_1h', 'HUM_1d', 'NLY_1h', 'NLY_1d', 'HUM_1h', 'FRPT_1h', 'TAP_1h', 'LASR_1h', 'WEC_1d', 'CYBR_1d', 'CYBR_1h', 'T_1h', 'MMC_1h', 'SN_1d', 'LASR_1d', 'EXPD_1d', 'GPC_1d', 'T_1d', 'GPC_1h', 'MMC_1d', 'EXPD_1h'}

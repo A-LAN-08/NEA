@@ -1,0 +1,239 @@
+--- OVERALL Performance Report ---
+Total Evaluated: 899606
+
+[LGBM Model Summary]
+Total correct: 452072
+Directional Accuracy: 50.25%
+
+[SVC Model Summary]
+Total correct: 408688
+Directional Accuracy: 45.43%
+
+[LASSO Model Summary]
+Total correct: 454570
+Directional Accuracy: 50.53%
+
+[LSTM Model Summary]
+Total correct: 451867
+Directional Accuracy: 50.23%
+
+[AVG Model Summary]
+Total correct: 454870
+Directional Accuracy: 50.56%
+Price Accuracy (2%): 69.20%
+==================================================
+--- 1h Performance Report ---
+
+[LGBM Model Summary]
+Total Predictions: 200800
+Total correct: 100024
+Directional Accuracy: 49.81%
+
+[SVC Model Summary]
+Total Predictions: 200800
+Total correct: 80741
+Directional Accuracy: 40.21%
+
+[LASSO Model Summary]
+Total Predictions: 200800
+Total correct: 100027
+Directional Accuracy: 49.81%
+
+[LSTM Model Summary]
+Total Predictions: 200800
+Total correct: 100738
+Directional Accuracy: 50.17%
+
+[AVG Model Summary]
+Total Predictions: 200800
+Total correct: 100190
+Directional Accuracy: 49.90%
+==================================================
+--- 2h Performance Report ---
+
+[LGBM Model Summary]
+Total Predictions: 160640
+Total correct: 80884
+Directional Accuracy: 50.35%
+
+[SVC Model Summary]
+Total Predictions: 160640
+Total correct: 73045
+Directional Accuracy: 45.47%
+
+[LASSO Model Summary]
+Total Predictions: 160640
+Total correct: 81241
+Directional Accuracy: 50.57%
+
+[LSTM Model Summary]
+Total Predictions: 160640
+Total correct: 81951
+Directional Accuracy: 51.02%
+
+[AVG Model Summary]
+Total Predictions: 160640
+Total correct: 81684
+Directional Accuracy: 50.85%
+==================================================
+--- 4h Performance Report ---
+
+[LGBM Model Summary]
+Total Predictions: 120480
+Total correct: 61595
+Directional Accuracy: 51.12%
+
+[SVC Model Summary]
+Total Predictions: 120480
+Total correct: 59418
+Directional Accuracy: 49.32%
+
+[LASSO Model Summary]
+Total Predictions: 120480
+Total correct: 61215
+Directional Accuracy: 50.81%
+
+[LSTM Model Summary]
+Total Predictions: 120480
+Total correct: 61377
+Directional Accuracy: 50.94%
+
+[AVG Model Summary]
+Total Predictions: 120480
+Total correct: 61705
+Directional Accuracy: 51.22%
+==================================================
+--- 25h Performance Report ---
+
+[LGBM Model Summary]
+Total Predictions: 187566
+Total correct: 95389
+Directional Accuracy: 50.86%
+
+[SVC Model Summary]
+Total Predictions: 187566
+Total correct: 92153
+Directional Accuracy: 49.13%
+
+[LASSO Model Summary]
+Total Predictions: 187566
+Total correct: 96335
+Directional Accuracy: 51.36%
+
+[LSTM Model Summary]
+Total Predictions: 187566
+Total correct: 94063
+Directional Accuracy: 50.15%
+
+[AVG Model Summary]
+Total Predictions: 187566
+Total correct: 95146
+Directional Accuracy: 50.73%
+==================================================
+--- 1d Performance Report ---
+
+[LGBM Model Summary]
+Total Predictions: 62965
+Total correct: 30812
+Directional Accuracy: 48.94%
+
+[SVC Model Summary]
+Total Predictions: 62965
+Total correct: 25685
+Directional Accuracy: 40.79%
+
+[LASSO Model Summary]
+Total Predictions: 62965
+Total correct: 31627
+Directional Accuracy: 50.23%
+
+[LSTM Model Summary]
+Total Predictions: 62965
+Total correct: 30596
+Directional Accuracy: 48.59%
+
+[AVG Model Summary]
+Total Predictions: 62965
+Total correct: 31460
+Directional Accuracy: 49.96%
+==================================================
+--- 2d Performance Report ---
+
+[LGBM Model Summary]
+Total Predictions: 62059
+Total correct: 30765
+Directional Accuracy: 49.57%
+
+[SVC Model Summary]
+Total Predictions: 62059
+Total correct: 26656
+Directional Accuracy: 42.95%
+
+[LASSO Model Summary]
+Total Predictions: 62059
+Total correct: 30977
+Directional Accuracy: 49.92%
+
+[LSTM Model Summary]
+Total Predictions: 62059
+Total correct: 30875
+Directional Accuracy: 49.75%
+
+[AVG Model Summary]
+Total Predictions: 62059
+Total correct: 31565
+Directional Accuracy: 50.86%
+==================================================
+--- 7d Performance Report ---
+
+[LGBM Model Summary]
+Total Predictions: 59341
+Total correct: 29550
+Directional Accuracy: 49.80%
+
+[SVC Model Summary]
+Total Predictions: 59341
+Total correct: 28445
+Directional Accuracy: 47.93%
+
+[LASSO Model Summary]
+Total Predictions: 59341
+Total correct: 30058
+Directional Accuracy: 50.65%
+
+[LSTM Model Summary]
+Total Predictions: 59341
+Total correct: 29955
+Directional Accuracy: 50.48%
+
+[AVG Model Summary]
+Total Predictions: 59341
+Total correct: 30021
+Directional Accuracy: 50.59%
+==================================================
+--- 28d Performance Report ---
+
+[LGBM Model Summary]
+Total Predictions: 45755
+Total correct: 23053
+Directional Accuracy: 50.38%
+
+[SVC Model Summary]
+Total Predictions: 45755
+Total correct: 22545
+Directional Accuracy: 49.27%
+
+[LASSO Model Summary]
+Total Predictions: 45755
+Total correct: 23090
+Directional Accuracy: 50.46%
+
+[LSTM Model Summary]
+Total Predictions: 45755
+Total correct: 22312
+Directional Accuracy: 48.76%
+
+[AVG Model Summary]
+Total Predictions: 45755
+Total correct: 23099
+Directional Accuracy: 50.48%

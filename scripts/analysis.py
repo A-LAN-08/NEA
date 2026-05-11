@@ -223,7 +223,8 @@ def train_model(ticker):
             }))
 
             full_data = load_data(ticker, interval)
-            cutoff_date = full_data.index.max() - pd.Timedelta(days=(60 if interval == "1d" else 20))
+            # cutoff_date = full_data.index.max() - pd.Timedelta(days=(60 if interval == "1d" else 20))
+            cutoff_date = pd.to_datetime("2026-02-01")
             training_data = full_data[full_data.index < cutoff_date]
 
             if not all_ticker_models_exist(os.path.join(MODEL_DIR, f"{ticker}_{interval}"), interval):
@@ -269,7 +270,7 @@ def run_training(free_cores: int = 0):
     #     ticker_map = json.load(f)
     #     ticker_list = sorted(list(ticker_map.values()))[::-1]
 
-    ticker_intervals = {'FNB_1d', 'TECH_1d', 'LNG_1d', 'SW_1d', 'ARM_1h', 'FERG_1d', 'MNST_1d', 'BRO_1d', 'FLUT_1d', 'RGLD_1d', 'KGC_1d', 'VSEC_1d', 'RCAT_1d', 'SU_1d'}
+    ticker_intervals = {'CRL_1h', 'AMGN_1d', 'HSIC_1d', 'SUI_1d', 'ICLR_1h', 'ISRG_1d', 'FAST_1d', 'AXTI_1d', 'OVV_1h', 'CTAS_1d', 'BAH_1d', 'KMX_1d', 'PEGA_1d', 'MRK_1d', 'MCHP_1d', 'RBC_1d', 'PCAR_1h', 'ESLT_1h', 'BEN_1h', 'DUOL_1d', 'TEVA_1d', 'SAN_1d', 'TRU_1d', 'PPG_1h', 'SCCO_1d', 'DE_1h', 'UHS_1d', 'CHTR_1d', 'FFIV_1d', 'MARA_1d', 'EFX_1d', 'AMD_1d', 'USFD_1d', 'INTC_1d', 'GWRE_1d', 'EXK_1d', 'WHR_1h', 'TCOM_1d', 'SWK_1d', 'KTOS_1d', 'WIX_1d', 'MTCH_1d', 'ALLE_1d', 'EOG_1d', 'PR_1d', 'GLW_1h', 'LFUS_1d', 'EPAM_1h', 'WDC_1h', 'EMR_1d'}
     ticker_list = sorted([t.split("_")[0] for t in ticker_intervals])
 
     num_cores = get_max_cores() - free_cores
@@ -386,10 +387,10 @@ def predict_model(ticker, interval):
 
         ## -----  Walk forward predictions  ----- ##
         last_train_date = pd.to_datetime(meta["training data end"])
-        test_data = full_data[full_data.index > last_train_date]
+        processed_df = full_data.ind.add_indicators(ticker, interval)
 
-        history = full_data[full_data.index <= last_train_date].tail(400).copy()
-        processed_df = history.ind.add_indicators(ticker, interval)
+        trained_data = processed_df[processed_df.index <= last_train_date].tail(400).copy()
+        testing_data = processed_df[processed_df.index > last_train_date]
 
         ledger_file = os.path.join(LEDGER_DIR, f"{ticker}_ledger.csv")
         ledger = None
@@ -406,15 +407,20 @@ def predict_model(ticker, interval):
             "default": {"LSTM": 0.3, "LGBM": 0.3, "SVC": 0.2, "LASSO": 0.2}
         }
 
-        for current_time in test_data.index:
+        history = trained_data.copy()
+        for current_time in testing_data.index:
+            current_row = testing_data.loc[[current_time]]
+            history = pd.concat([history, current_row])
+            recent_history = history.tail(400).copy()
+
             if ledger is not None:
                 # Check if any entry matches current ticker and last trade date
-                match: pd.DataFrame = ledger[(ledger['Interval'] == interval) & (ledger['Open_Date'] == current_time) &
-                                             (ledger["Horizon"].isin([f"{horizon}{period}" for horizon in horizons]))] # noqa
+                match: pd.DataFrame = ledger[(ledger['Interval'] == interval) &
+                                             (ledger['Open_Date'] == current_time)]
                 if not match.empty: continue
 
-            current_price = processed_df['Adj Close'].iloc[-1]
-            current_volatility_atr = float(processed_df['ATR'].iloc[-1])
+            current_price = recent_history['Adj Close'].iloc[-1]
+            current_volatility_atr = float(recent_history['ATR'].iloc[-1])
 
             target_dates = get_market_dates(current_time, horizons, period)
             if len(target_dates) < 1: continue
@@ -426,25 +432,26 @@ def predict_model(ticker, interval):
                 signals = {}
                 for model_type, model_obj in bundle["models"].items():
                     if model_type == "LSTM":
-                        recent_data = processed_df[features].tail(14)
+                        recent_data = recent_history[features].tail(14)
                         scaled_seq = scaler.transform(recent_data)
                         x_3d = np.expand_dims(scaled_seq, axis=0).astype(np.float32)
 
                         with torch.no_grad():
-                            signals[model_type] = (float(model_obj(torch.from_numpy(x_3d).to(device)).item()) - 0.5) * 2
+                            signals[model_type] = (float(model_obj(torch.from_numpy(x_3d).to(device)).item()) - 0.5) * -2
 
                     elif model_type == "LGBM":
-                        scaled_row = scaler.transform(processed_df[features].iloc[-1:])
-                        signals[model_type] = (float(model_obj.predict(scaled_row)[0]) - 0.5) * 2
+                        scaled_row = scaler.transform(recent_history[features].iloc[-1:])
+                        signals[model_type] = (float(model_obj.predict(scaled_row)[0]) - 0.5) * -2
 
                     else:  # Lasso / SVC
-                        scaled_row = scaler.transform(processed_df[features].iloc[-1:])
-                        signals[model_type] = (float(model_obj.predict_proba(scaled_row)[0][1]) - 0.5) * 2
+                        scaled_row = scaler.transform(recent_history[features].iloc[-1:])
+                        signals[model_type] = (float(model_obj.predict_proba(scaled_row)[0][1]) - 0.5) * -2
 
                 # Average prediction
-                horizon_weights = weights.get(f"{horizons[step]}{period}", {"LSTM": 0.3, "LGBM": 0.3, "SVC": 0.2, "LASSO": 0.2})
+                horizon_weights = weights.get(f"{horizons[step]}{period}",
+                                              {"LSTM": 0.3, "LGBM": 0.3, "SVC": 0.2, "LASSO": 0.2})
                 avg_signal = sum(horizon_weights[key] * signals[key] for key in horizon_weights.keys())
-                
+
                 # Calculate predicted price
                 expected_move_magnitude = current_volatility_atr * np.sqrt(step)
                 predicted_price = current_price + (2 * avg_signal * expected_move_magnitude)
@@ -493,9 +500,11 @@ def run_predictions(free_cores: int = 0):
     num_cores = max(1, get_max_cores() - free_cores)
     print(f"-> Using {num_cores} CPU cores...")
 
-    with open(os.path.join(DATA_DIR, "ticker_map.json"), "r") as f:
-        ticker_map = json.load(f)
-        ticker_list = sorted(list(ticker_map.values()))[::-1]
+    # with open(os.path.join(DATA_DIR, "ticker_map.json"), "r") as f:
+    #     ticker_map = json.load(f)
+    #     ticker_list = sorted(list(ticker_map.values()))
+
+    ticker_list = sorted(list({'BAX', 'TECH', 'SN', 'TTD', 'TDG', 'TSCO', 'WDC', 'CYBR', 'TXT', 'TWLO', 'WEC', 'PCAR', 'TTEK', 'TRV', 'TXRH', 'ICLR', 'TXN', 'ESLT', 'TTMI', 'MMC', 'EGO', 'FRPT', 'TSLA', 'TDY', 'TSEM', 'USO', 'BBIO', 'TSN', 'TTE', 'TW', 'LASR', 'GLW', 'BAM', 'BAC', 'TD', 'TAP', 'UTHR', 'BALL', 'OVV', 'BABA', 'EXPD', 'EG', 'AZO', 'BAH', 'WHR', 'HUM', 'TEAM', 'DE', 'BAP', 'TT', 'TYL', 'CRL', 'T', 'B', 'AYI', 'EPAM', 'BA', 'AZN', 'GPC', 'TSM', 'TTWO', 'NLY', 'PPG', 'BEN'}))
 
     tasks = []
     for ticker in ticker_list:
@@ -577,18 +586,14 @@ if __name__ == '__main__':
     #     cache=True,  # Stock cache
     # )
 
-    # run_training(
-    #     free_cores=4 # How many CPU cores do you want left free
-    #                  # Not necessary as there are stop buttons
-    # )
-
-    run_predictions(
-        free_cores=1 # How many CPU cores do you want left free
+    run_training(
+        free_cores=4 # How many CPU cores do you want left free
+                     # Not necessary as there are stop buttons
     )
 
-
-
-
+    # run_predictions(
+    #     free_cores=1 # How many CPU cores do you want left free
+    # )
 
 
 
